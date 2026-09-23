@@ -1,0 +1,11 @@
+{
+  "name": "foodcost-purchase",
+  "private": true,
+  "scripts": {
+    "build": "node build.js"
+  },
+  "devDependencies": {
+    "@babel/core": "^8.0.6",
+    "@babel/preset-react": "^8.0.1"
+  }
+}
