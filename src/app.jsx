@@ -1,7 +1,7 @@
 /* 식자재 구매·평가 보드 — 소스. 수정 후 `node build.js` 로 app.js 생성 */
 const { useState, useEffect, useMemo, useCallback, useRef, memo } = React;
 const { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area, CartesianGrid, Legend } = Recharts;
-const { Search, Plus, Minus, List, CalendarDays, BarChart3, ShoppingBasket, CheckCircle2, XCircle, Bookmark, Loader2, X, ChevronLeft, ChevronRight, ChevronDown, AlertTriangle, GitMerge, Trash2, Save, RotateCcw, Radio, MessageSquarePlus, UserRound, RefreshCw } = LucideReact;
+const { Search, Plus, Minus, List, CalendarDays, BarChart3, ShoppingBasket, CheckCircle2, XCircle, Bookmark, Loader2, X, ChevronLeft, ChevronRight, ChevronDown, AlertTriangle, GitMerge, Trash2, Save, RotateCcw, Radio, MessageSquarePlus, User, RefreshCw } = LucideReact;
 
 /* ────────────────────────────── 설정 ────────────────────────────── */
 const CFG = window.PUR_CONFIG || {};
@@ -799,7 +799,7 @@ function App() {
             </span>
             {author && (
               <button type="button" onClick={() => { setAuthorDraft(author); setAuthor(''); }} className="inline-flex h-10 items-center gap-2 rounded-full bg-slate-800 px-3 text-sm font-bold text-white hover:bg-slate-700" title="이름 바꾸기">
-                <UserRound size={15} />{author}
+                <User size={15} />{author}
               </button>
             )}
           </div>

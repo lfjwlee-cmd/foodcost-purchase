@@ -44,7 +44,7 @@ const {
   RotateCcw,
   Radio,
   MessageSquarePlus,
-  UserRound,
+  User,
   RefreshCw
 } = LucideReact;
 const CFG = window.PUR_CONFIG || {};
@@ -1754,7 +1754,7 @@ function App() {
     },
     className: "inline-flex h-10 items-center gap-2 rounded-full bg-slate-800 px-3 text-sm font-bold text-white hover:bg-slate-700",
     title: "이름 바꾸기"
-  }, React.createElement(UserRound, {
+  }, React.createElement(User, {
     size: 15
   }), author)))), React.createElement("main", {
     className: "mx-auto max-w-7xl space-y-4 px-4 py-4 sm:py-6"
