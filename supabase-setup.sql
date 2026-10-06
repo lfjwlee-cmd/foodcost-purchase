@@ -31,6 +31,11 @@ create table if not exists public.pur_items (
 );
 create index if not exists idx_pur_items_date on public.pur_items(date desc);
 
+-- 2026-10-07 추가: 구매처·내용량 (migration-20261007 과 동일)
+alter table public.pur_items add column if not exists purchase_place text not null default '';
+alter table public.pur_items add column if not exists content_qty   numeric;
+alter table public.pur_items add column if not exists content_unit  text not null default '';
+
 -- updated_at 자동 갱신
 create or replace function public.pur_touch() returns trigger language plpgsql as $$
 begin new.updated_at := now(); return new; end $$;

@@ -1,2 +1,4 @@
 node_modules/
 *.log
+migration-*원본백업.json
+migration-*기존데이터이전.sql

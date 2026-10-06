@@ -57,7 +57,8 @@ const sb = window.supabase && CFG.SUPABASE_URL ? window.supabase.createClient(CF
   }
 }) : null;
 const CATS = ['육류', '해산물', '농산물', '가공품', '소스·양념', '기타'];
-const UNITS = ['kg', 'g', 'ea', '팩', '박스', 'L'];
+const UNITS = ['봉', '팩', '묶음', '단', '개', '박스', 'kg'];
+const CONTENT_UNITS = ['g', 'kg', 'ml', 'L', '장', '개'];
 const BRANDS = ['삼대미역', '인생아구찜', '어화락', '공통'];
 const VERDICT = {
   usable: {
@@ -114,6 +115,34 @@ const dowOf = s => new Date(s + 'T00:00:00').getDay();
 const fmtQty = n => Number(n).toLocaleString('ko-KR', {
   maximumFractionDigits: 2
 });
+const numOrNull = v => v === '' || v === null || v === undefined || isNaN(+v) ? null : +v;
+const selectAll = e => e.target.select();
+const unitCost = (price, cq, cu) => {
+  const p = Number(price),
+    q = Number(cq);
+  if (!(p > 0) || !(q > 0) || !cu) return null;
+  if (cu === 'g') return {
+    v: p / (q / 1000),
+    per: 'kg'
+  };
+  if (cu === 'kg') return {
+    v: p / q,
+    per: 'kg'
+  };
+  if (cu === 'ml') return {
+    v: p / (q / 1000),
+    per: 'L'
+  };
+  if (cu === 'L') return {
+    v: p / q,
+    per: 'L'
+  };
+  return {
+    v: p / q,
+    per: cu
+  };
+};
+const contentText = it => Number(it.content_qty) > 0 && it.content_unit ? `${fmtQty(it.content_qty)}${it.content_unit}` : '';
 const lsGet = k => {
   try {
     return localStorage.getItem(k) || '';
@@ -133,7 +162,8 @@ const derive = it => {
   if (!d) {
     d = {
       amount: Number(it.qty) * Number(it.unit_price),
-      hay: [it.no, it.name, it.category, it.supplier, it.spec, it.brand, it.requester, it.ev_by, it.note, it.ev_comment, ...(it.ev_tags || []), vmeta(it.ev_v).label].join(' ').toLowerCase()
+      unit: unitCost(it.unit_price, it.content_qty, it.content_unit),
+      hay: [it.no, it.name, it.category, it.supplier, it.purchase_place, it.spec, it.brand, it.requester, it.ev_by, it.note, it.ev_comment, ...(it.ev_tags || []), vmeta(it.ev_v).label].join(' ').toLowerCase()
     };
     DERIVED.set(it, d);
   }
@@ -216,10 +246,296 @@ const VerdictPicker = memo(function VerdictPicker({
     }, V.label));
   }));
 });
+const formFrom = it => ({
+  date: it.date,
+  name: it.name || '',
+  purchase_place: it.purchase_place || '',
+  supplier: it.supplier || '',
+  qty: it.qty === null || it.qty === undefined ? '' : String(Number(it.qty)),
+  unit: it.unit || '봉',
+  unit_price: it.unit_price === null || it.unit_price === undefined ? '' : String(Number(it.unit_price)),
+  content_qty: Number(it.content_qty) > 0 ? String(Number(it.content_qty)) : '',
+  content_unit: it.content_unit || 'g',
+  category: it.category || '기타',
+  brand: it.brand || '',
+  spec: it.spec || '',
+  note: it.note || ''
+});
+const toPayload = f => {
+  const qty = numOrNull(f.qty),
+    price = numOrNull(f.unit_price),
+    cq = numOrNull(f.content_qty);
+  if (!(qty > 0) || qty > 1000000) return {
+    err: '구매 수량을 입력하세요 (0보다 큰 수).'
+  };
+  if (price === null || price < 0 || price > 100000000) return {
+    err: `가격(1${f.unit}당)을 입력하세요.`
+  };
+  if (cq !== null && !(cq > 0)) return {
+    err: '내용량은 0보다 크게 입력하거나 비워 두세요.'
+  };
+  if (!f.date) return {
+    err: '구매한 날짜(입고일)를 달력에서 선택하세요.'
+  };
+  if (f.date > todayStr()) return {
+    err: '입고일은 오늘 이후로 선택할 수 없습니다.'
+  };
+  return {
+    data: {
+      date: f.date,
+      qty,
+      unit: f.unit,
+      unit_price: price,
+      content_qty: cq,
+      content_unit: cq ? f.content_unit : '',
+      purchase_place: f.purchase_place.trim(),
+      supplier: f.supplier.trim(),
+      category: f.category,
+      brand: f.brand,
+      spec: f.spec.trim(),
+      note: f.note.trim()
+    }
+  };
+};
+const previewOf = f => {
+  const q = numOrNull(f.qty),
+    p = numOrNull(f.unit_price);
+  return {
+    total: q > 0 && p !== null && p >= 0 ? q * p : null,
+    uc: unitCost(p, numOrNull(f.content_qty), f.content_unit)
+  };
+};
+const ucText = uc => uc ? `${uc.per}당 ${Math.round(uc.v).toLocaleString('ko-KR')}원` : '';
+const UnitChips = memo(function UnitChips({
+  value,
+  onChange,
+  idp
+}) {
+  const list = UNITS.includes(value) ? UNITS : [...UNITS, value];
+  return React.createElement("div", {
+    className: "mt-1 flex flex-wrap gap-1.5"
+  }, list.map(u => React.createElement("button", {
+    key: u,
+    id: `${idp}-${u}`,
+    type: "button",
+    onClick: () => onChange(u),
+    "aria-pressed": value === u,
+    className: `h-10 min-w-12 rounded-lg border px-3 text-sm font-bold touch-manipulation ${value === u ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-300 bg-white text-slate-700 hover:border-slate-500'}`
+  }, u)));
+});
+function PurchaseFields({
+  f,
+  set,
+  idp,
+  places,
+  showName,
+  nameProps
+}) {
+  const field = 'h-12 w-full rounded-xl border border-slate-300 bg-white px-3 text-base text-slate-900 focus:border-slate-900 focus:outline-none';
+  const lab = 'text-xs font-semibold text-slate-700';
+  const step = f.unit === 'kg' ? 0.5 : 1;
+  const bump = d => {
+    const q = numOrNull(f.qty) || 0;
+    set({
+      qty: String(Math.max(step, +(q + d).toFixed(2)))
+    });
+  };
+  return React.createElement("div", {
+    className: "grid grid-cols-2 gap-3 md:grid-cols-12"
+  }, React.createElement("label", {
+    className: `${lab} md:col-span-3`
+  }, "입고일 (구매한 날) ", React.createElement("span", {
+    className: "text-rose-600"
+  }, "*필수"), React.createElement("input", {
+    id: `${idp}-date`,
+    type: "date",
+    required: true,
+    value: f.date,
+    max: todayStr(),
+    onChange: e => set({
+      date: e.target.value
+    }),
+    className: `${field} mt-1 ${f.date ? '' : 'border-rose-400 bg-rose-50'}`
+  }), !f.date && React.createElement("span", {
+    className: "mt-1 block font-normal text-rose-600"
+  }, "달력에서 실제로 산 날을 고르세요")), showName && React.createElement("label", {
+    className: `${lab} md:col-span-5`
+  }, "품목명", React.createElement("input", {
+    id: `${idp}-name`,
+    list: "dl-names",
+    value: f.name,
+    maxLength: 60,
+    placeholder: "예: 깻잎",
+    onChange: e => set({
+      name: e.target.value
+    }),
+    className: `${field} mt-1`,
+    ...nameProps
+  })), React.createElement("div", {
+    className: `${lab} col-span-2 ${showName ? 'md:col-span-4' : 'md:col-span-9'}`
+  }, React.createElement("label", {
+    htmlFor: `${idp}-place`
+  }, "구매처 (어디서 샀나)"), React.createElement("input", {
+    id: `${idp}-place`,
+    list: "dl-places",
+    value: f.purchase_place,
+    placeholder: "예: 쿠팡, 퀀마트",
+    onChange: e => set({
+      purchase_place: e.target.value
+    }),
+    className: `${field} mt-1`
+  }), places && places.length > 0 && React.createElement("div", {
+    className: "mt-1.5 flex gap-1.5 overflow-x-auto pb-0.5"
+  }, places.map(p => React.createElement("button", {
+    key: p,
+    type: "button",
+    onClick: () => set({
+      purchase_place: p
+    }),
+    className: `h-8 shrink-0 rounded-full border px-3 text-xs font-bold ${f.purchase_place === p ? 'border-sky-700 bg-sky-700 text-white' : 'border-sky-200 bg-white text-sky-800'}`
+  }, p)))), React.createElement("div", {
+    className: `${lab} md:col-span-3`
+  }, "구매 수량", React.createElement("div", {
+    className: "mt-1 flex h-12 overflow-hidden rounded-xl border border-slate-300 bg-white"
+  }, React.createElement("button", {
+    type: "button",
+    "aria-label": "수량 감소",
+    onClick: () => bump(-step),
+    className: "w-11 shrink-0 text-slate-600 hover:bg-slate-100"
+  }, React.createElement(Minus, {
+    size: 18,
+    className: "mx-auto"
+  })), React.createElement("input", {
+    id: `${idp}-qty`,
+    type: "number",
+    step: "any",
+    min: "0",
+    inputMode: "decimal",
+    value: f.qty,
+    onFocus: selectAll,
+    onChange: e => set({
+      qty: e.target.value
+    }),
+    className: "min-w-0 flex-1 text-center text-base font-bold tabular-nums focus:outline-none"
+  }), React.createElement("button", {
+    type: "button",
+    "aria-label": "수량 증가",
+    onClick: () => bump(step),
+    className: "w-11 shrink-0 text-slate-600 hover:bg-slate-100"
+  }, React.createElement(Plus, {
+    size: 18,
+    className: "mx-auto"
+  })))), React.createElement("div", {
+    className: `${lab} col-span-2 md:col-span-5`
+  }, "구매 단위", React.createElement(UnitChips, {
+    value: f.unit,
+    onChange: u => set({
+      unit: u
+    }),
+    idp: `${idp}-unit`
+  })), React.createElement("label", {
+    className: `${lab} col-span-2 sm:col-span-1 md:col-span-4`
+  }, "가격 (1", f.unit, "당, 원)", React.createElement("input", {
+    id: `${idp}-price`,
+    type: "number",
+    min: "0",
+    inputMode: "numeric",
+    value: f.unit_price,
+    placeholder: "예: 1580",
+    onFocus: selectAll,
+    onChange: e => set({
+      unit_price: e.target.value
+    }),
+    className: `${field} mt-1 tabular-nums`
+  })), React.createElement("div", {
+    className: `${lab} col-span-2 sm:col-span-1 md:col-span-3`
+  }, "내용량 ", React.createElement("span", {
+    className: "font-normal text-slate-500"
+  }, "(선택 · 1", f.unit, " 안에 든 양)"), React.createElement("div", {
+    className: "mt-1 flex h-12 overflow-hidden rounded-xl border border-slate-300 bg-white"
+  }, React.createElement("input", {
+    id: `${idp}-cq`,
+    type: "number",
+    step: "any",
+    min: "0",
+    inputMode: "decimal",
+    value: f.content_qty,
+    placeholder: "예: 600",
+    onFocus: selectAll,
+    onChange: e => set({
+      content_qty: e.target.value
+    }),
+    className: "min-w-0 flex-1 px-3 text-base tabular-nums focus:outline-none"
+  }), React.createElement("select", {
+    id: `${idp}-cu`,
+    "aria-label": "내용량 단위",
+    value: f.content_unit,
+    onChange: e => set({
+      content_unit: e.target.value
+    }),
+    className: "shrink-0 border-l border-slate-300 bg-slate-50 px-2 text-sm font-semibold focus:outline-none"
+  }, CONTENT_UNITS.map(u => React.createElement("option", {
+    key: u
+  }, u))))), React.createElement("label", {
+    className: `${lab} col-span-2 sm:col-span-1 md:col-span-3`
+  }, "거래처 (제조·공급사)", React.createElement("input", {
+    id: `${idp}-sup`,
+    list: "dl-suppliers",
+    value: f.supplier,
+    placeholder: "예: 한성기업",
+    onChange: e => set({
+      supplier: e.target.value
+    }),
+    className: `${field} mt-1`
+  })), React.createElement("label", {
+    className: `${lab} md:col-span-3`
+  }, "분류", React.createElement("select", {
+    id: `${idp}-cat`,
+    value: f.category,
+    onChange: e => set({
+      category: e.target.value
+    }),
+    className: `${field} mt-1`
+  }, CATS.map(c => React.createElement("option", {
+    key: c
+  }, c)))), React.createElement("label", {
+    className: `${lab} md:col-span-3`
+  }, "브랜드", React.createElement("select", {
+    id: `${idp}-brand`,
+    value: f.brand,
+    onChange: e => set({
+      brand: e.target.value
+    }),
+    className: `${field} mt-1`
+  }, React.createElement("option", {
+    value: ""
+  }, "선택 안 함"), BRANDS.map(b => React.createElement("option", {
+    key: b
+  }, b)))));
+}
+const PriceLine = ({
+  f
+}) => {
+  const {
+    total,
+    uc
+  } = previewOf(f);
+  const q = numOrNull(f.qty),
+    p = numOrNull(f.unit_price);
+  return React.createElement("p", {
+    className: "text-sm text-slate-600"
+  }, "총액 ", React.createElement("b", {
+    className: "tabular-nums text-slate-900"
+  }, total === null ? '—' : fmtKRW(total)), q > 0 && p !== null && p >= 0 && React.createElement("span", {
+    className: "tabular-nums"
+  }, " = ", fmtQty(q), f.unit, " × ", p.toLocaleString('ko-KR'), "원"), uc && React.createElement("span", {
+    className: "ml-2 rounded-md bg-slate-100 px-2 py-0.5 text-xs font-semibold tabular-nums text-slate-700"
+  }, ucText(uc)));
+};
 function DetailPanel({
   item,
   focusComment,
-  suppliers,
+  places,
   onEval,
   onUpdate,
   onRemove,
@@ -227,18 +543,11 @@ function DetailPanel({
 }) {
   const [tags, setTags] = useState(item.ev_tags || []);
   const [comment, setComment] = useState(item.ev_comment || '');
-  const pick = it => ({
-    qty: Number(it.qty),
-    unit: it.unit,
-    unit_price: Number(it.unit_price),
-    supplier: it.supplier,
-    category: it.category,
-    spec: it.spec,
-    brand: it.brand,
-    date: it.date,
-    note: it.note
-  });
-  const [f, setF] = useState(pick(item));
+  const [f, setF] = useState(() => formFrom(item));
+  const set = patch => setF(s => ({
+    ...s,
+    ...patch
+  }));
   const [err, setErr] = useState('');
   const cRef = useRef(null);
   useEffect(() => {
@@ -249,24 +558,20 @@ function DetailPanel({
     setComment(item.ev_comment || '');
   }, [item.ev_ver]);
   const evDirty = comment !== (item.ev_comment || '') || tags.join() !== (item.ev_tags || []).join();
-  const orig = pick(item);
-  const buyDirty = Object.keys(f).some(k => f[k] !== orig[k]);
+  const buyDirty = JSON.stringify(f) !== JSON.stringify(formFrom(item));
   const toggleTag = t => setTags(ts => ts.includes(t) ? ts.filter(x => x !== t) : [...ts, t]);
   const saveEval = () => onEval(item.id, {
     ev_tags: tags,
     ev_comment: comment.trim()
   });
   const saveBuy = () => {
-    if (!(f.qty > 0) || f.qty > 1000000) return setErr('수량은 0보다 크고 1,000,000 이하로 입력하세요.');
-    if (!(f.unit_price >= 0) || f.unit_price > 100000000) return setErr('단가는 0~1억원 범위로 입력하세요.');
-    if (!f.date) return setErr('입고일을 선택하세요.');
+    const {
+      err: e,
+      data
+    } = toPayload(f);
+    if (e) return setErr(e);
     setErr('');
-    onUpdate(item.id, {
-      ...f,
-      supplier: f.supplier.trim(),
-      spec: f.spec.trim(),
-      note: f.note.trim()
-    });
+    onUpdate(item.id, data);
   };
   const input = 'h-12 w-full rounded-xl border border-slate-300 bg-white px-3 text-base text-slate-900 focus:border-slate-900 focus:outline-none';
   const lab = 'text-xs font-semibold text-slate-600';
@@ -308,123 +613,44 @@ function DetailPanel({
   }), "평 저장")), React.createElement("p", {
     className: "mt-1 text-xs text-slate-400"
   }, item.ev_by ? `마지막 평가 ${item.ev_by} · ${fmtAt(item.ev_at)}` : '아직 평가 없음')), React.createElement("div", {
-    className: "border-t border-slate-200 pt-4"
+    className: "space-y-3 border-t border-slate-200 pt-4"
   }, React.createElement("p", {
-    className: "mb-2 text-xs font-bold text-slate-600"
-  }, "구매 정보"), React.createElement("div", {
-    className: "grid grid-cols-2 gap-3 md:grid-cols-4"
+    className: "text-xs font-bold text-slate-600"
+  }, "구매 정보"), React.createElement(PurchaseFields, {
+    f: f,
+    set: set,
+    idp: `e-${item.id}`,
+    places: places,
+    showName: false
+  }), React.createElement("div", {
+    className: "grid grid-cols-2 gap-3"
   }, React.createElement("label", {
-    className: lab
-  }, "수량", React.createElement("input", {
-    id: `e-qty-${item.id}`,
-    type: "number",
-    step: "any",
-    inputMode: "decimal",
-    value: f.qty,
-    onChange: e => setF({
-      ...f,
-      qty: +e.target.value
-    }),
-    className: `${input} mt-1`
-  })), React.createElement("label", {
-    className: lab
-  }, "단위", React.createElement("select", {
-    id: `e-unit-${item.id}`,
-    value: f.unit,
-    onChange: e => setF({
-      ...f,
-      unit: e.target.value
-    }),
-    className: `${input} mt-1`
-  }, UNITS.map(u => React.createElement("option", {
-    key: u
-  }, u)))), React.createElement("label", {
-    className: lab
-  }, "단가 (원)", React.createElement("input", {
-    id: `e-price-${item.id}`,
-    type: "number",
-    inputMode: "numeric",
-    value: f.unit_price,
-    onChange: e => setF({
-      ...f,
-      unit_price: +e.target.value
-    }),
-    className: `${input} mt-1`
-  })), React.createElement("label", {
-    className: lab
-  }, "입고일", React.createElement("input", {
-    id: `e-date-${item.id}`,
-    type: "date",
-    value: f.date,
-    onChange: e => setF({
-      ...f,
-      date: e.target.value
-    }),
-    className: `${input} mt-1`
-  })), React.createElement("label", {
-    className: lab
-  }, "거래처", React.createElement("input", {
-    id: `e-sup-${item.id}`,
-    list: "dl-suppliers",
-    value: f.supplier,
-    onChange: e => setF({
-      ...f,
-      supplier: e.target.value
-    }),
-    className: `${input} mt-1`
-  })), React.createElement("label", {
-    className: lab
-  }, "분류", React.createElement("select", {
-    id: `e-cat-${item.id}`,
-    value: f.category,
-    onChange: e => setF({
-      ...f,
-      category: e.target.value
-    }),
-    className: `${input} mt-1`
-  }, CATS.map(c => React.createElement("option", {
-    key: c
-  }, c)))), React.createElement("label", {
-    className: lab
-  }, "브랜드", React.createElement("select", {
-    id: `e-brand-${item.id}`,
-    value: f.brand,
-    onChange: e => setF({
-      ...f,
-      brand: e.target.value
-    }),
-    className: `${input} mt-1`
-  }, React.createElement("option", {
-    value: ""
-  }, "선택 안 함"), BRANDS.map(b => React.createElement("option", {
-    key: b
-  }, b)))), React.createElement("label", {
     className: lab
   }, "규격·원산지", React.createElement("input", {
     id: `e-spec-${item.id}`,
     value: f.spec,
-    onChange: e => setF({
-      ...f,
+    onChange: e => set({
       spec: e.target.value
     }),
     className: `${input} mt-1`
   })), React.createElement("label", {
-    className: `${lab} col-span-2 md:col-span-4`
+    className: lab
   }, "메모", React.createElement("input", {
     id: `e-note-${item.id}`,
     value: f.note,
     placeholder: "LOT, 샘플 여부 등",
-    onChange: e => setF({
-      ...f,
+    onChange: e => set({
       note: e.target.value
     }),
     className: `${input} mt-1`
-  }))), err && React.createElement("p", {
-    className: "mt-2 flex items-center gap-1 text-sm font-semibold text-rose-700"
+  }))), React.createElement(PriceLine, {
+    f: f
+  }), err && React.createElement("p", {
+    className: "flex items-center gap-1 text-sm font-semibold text-rose-700"
   }, React.createElement(AlertTriangle, {
     size: 14
   }), err), React.createElement("div", {
-    className: "mt-3 flex flex-wrap gap-2"
+    className: "flex flex-wrap gap-2"
   }, React.createElement("button", {
     type: "button",
     disabled: !buyDirty || item._syncing,
@@ -443,12 +669,13 @@ function DetailPanel({
     onClick: onClose,
     className: "ml-auto h-12 rounded-xl px-4 text-sm font-semibold text-slate-600 hover:bg-slate-200"
   }, "접기")), React.createElement("p", {
-    className: "mt-2 text-xs text-slate-400"
+    className: "text-xs text-slate-400"
   }, "등록 ", item.requester || '—', " · ", fmtAt(item.created_at))));
 }
 const PartRow = memo(function PartRow({
   item,
   expanded,
+  places,
   onVerdict,
   onEval,
   onToggleExpand,
@@ -458,6 +685,7 @@ const PartRow = memo(function PartRow({
   const d = derive(item);
   const tags = item.ev_tags || [];
   const hasReview = item.ev_comment || tags.length;
+  const content = contentText(item);
   return React.createElement("article", {
     className: `rounded-2xl border bg-white transition ${item.ev_v === 'unusable' ? 'border-rose-300' : 'border-slate-200'} ${item._syncing ? 'opacity-60' : ''}`
   }, React.createElement("div", {
@@ -472,7 +700,9 @@ const PartRow = memo(function PartRow({
     className: "rounded-md border border-slate-300 px-2 py-0.5 text-xs font-semibold text-slate-600"
   }, item.category), item.brand && React.createElement("span", {
     className: "rounded-md bg-orange-100 px-2 py-0.5 text-xs font-semibold text-orange-800"
-  }, item.brand), !item.ev_v && React.createElement("span", {
+  }, item.brand), item.purchase_place && React.createElement("span", {
+    className: "rounded-md bg-sky-100 px-2 py-0.5 text-xs font-semibold text-sky-800"
+  }, item.purchase_place), !item.ev_v && React.createElement("span", {
     className: `rounded-md px-2 py-0.5 text-xs font-semibold ${NONE.badge}`
   }, "평가 전"), item._syncing && React.createElement("span", {
     className: "inline-flex items-center gap-1 text-xs font-semibold text-orange-700"
@@ -483,13 +713,15 @@ const PartRow = memo(function PartRow({
     className: "mt-1.5 truncate text-base font-bold text-slate-900"
   }, item.name), React.createElement("p", {
     className: "truncate text-xs text-slate-500"
-  }, [item.supplier, item.spec].filter(Boolean).join(' · ') || '거래처 미입력')), React.createElement("div", {
-    className: "flex items-baseline justify-between gap-3 lg:col-span-2 lg:block"
+  }, [item.supplier, item.spec].filter(Boolean).join(' · ') || (item.purchase_place ? '' : '구매처 미입력'))), React.createElement("div", {
+    className: "flex flex-wrap items-baseline justify-between gap-x-3 lg:col-span-2 lg:block"
   }, React.createElement("p", {
     className: "text-lg font-extrabold tabular-nums text-slate-900"
   }, fmtKRW(d.amount)), React.createElement("p", {
     className: "text-xs tabular-nums text-slate-500"
-  }, fmtQty(item.qty), item.unit, " × ", Number(item.unit_price).toLocaleString(), "원"), React.createElement("p", {
+  }, fmtQty(item.qty), item.unit, " × ", Number(item.unit_price).toLocaleString(), "원"), content && React.createElement("p", {
+    className: "text-xs tabular-nums text-slate-500"
+  }, "1", item.unit, " ", content, d.unit ? ` · ${ucText(d.unit)}` : ''), React.createElement("p", {
     className: "text-xs text-slate-500"
   }, item.date.slice(5), " (", WEEK[dowOf(item.date)], ")", item.requester ? ` · ${item.requester}` : '')), React.createElement("div", {
     className: "min-w-0 space-y-2 lg:col-span-5"
@@ -526,6 +758,7 @@ const PartRow = memo(function PartRow({
     className: `transition ${expanded ? 'rotate-180' : ''}`
   })))), expanded && React.createElement(DetailPanel, {
     item: item,
+    places: places,
     focusComment: expanded === 'comment',
     onEval: onEval,
     onUpdate: onUpdate,
@@ -535,6 +768,7 @@ const PartRow = memo(function PartRow({
 });
 const QuickAdd = memo(function QuickAdd({
   items,
+  places,
   onAdd,
   onMerge
 }) {
@@ -546,18 +780,21 @@ const QuickAdd = memo(function QuickAdd({
     return m;
   }, [items]);
   const recent = useMemo(() => [...latestByName.keys()].slice(0, 6), [latestByName]);
-  const blank = {
+  const blank = () => ({
+    date: '',
     name: '',
-    qty: 1,
-    unit: 'kg',
-    unit_price: 0,
+    purchase_place: '',
     supplier: '',
+    qty: '1',
+    unit: '봉',
+    unit_price: '',
+    content_qty: '',
+    content_unit: 'g',
     category: '기타',
     brand: '',
     spec: '',
-    note: '',
-    date: todayStr()
-  };
+    note: ''
+  });
   const [f, setF] = useState(blank);
   const [more, setMore] = useState(false);
   const [err, setErr] = useState('');
@@ -567,202 +804,108 @@ const QuickAdd = memo(function QuickAdd({
   }));
   const fillFrom = name => {
     const p = latestByName.get(name);
-    if (p) set({
-      name,
-      unit: p.unit,
-      unit_price: Number(p.unit_price),
-      supplier: p.supplier,
-      category: p.category,
-      brand: p.brand,
-      spec: p.spec
-    });else set({
+    if (!p) return set({
       name
     });
+    const prev = formFrom(p);
+    set({
+      name,
+      purchase_place: prev.purchase_place,
+      supplier: prev.supplier,
+      unit: prev.unit,
+      unit_price: prev.unit_price,
+      content_qty: prev.content_qty,
+      content_unit: prev.content_unit,
+      category: prev.category,
+      brand: prev.brand,
+      spec: prev.spec
+    });
   };
-  const step = f.unit === 'g' ? 100 : 1;
-  const dup = f.name && items.find(it => it.name === f.name.trim() && it.date === f.date && it.supplier === f.supplier.trim() && !it._syncing);
+  const dup = f.name && items.find(it => it.name === f.name.trim() && it.date === f.date && (it.purchase_place || '') === f.purchase_place.trim() && !it._syncing);
   const submit = e => {
     e.preventDefault();
     const name = f.name.trim();
     if (!name) return setErr('품목명을 입력하세요.');
     if (name.length > 60) return setErr('품목명은 60자 이내로 입력하세요.');
-    if (!(f.qty > 0) || f.qty > 1000000) return setErr('수량은 0보다 크고 1,000,000 이하로 입력하세요.');
-    if (!(f.unit_price >= 0) || f.unit_price > 100000000) return setErr('단가는 0~1억원 범위로 입력하세요.');
-    if (!f.date) return setErr('입고일을 선택하세요.');
+    const {
+      err: er,
+      data
+    } = toPayload(f);
+    if (er) return setErr(er);
     setErr('');
     onAdd({
-      ...f,
-      name,
-      supplier: f.supplier.trim(),
-      spec: f.spec.trim(),
-      note: f.note.trim()
+      ...data,
+      name
     });
     set({
       name: '',
-      qty: 1,
+      qty: '1',
+      unit_price: '',
+      content_qty: '',
       note: ''
     });
   };
   const field = 'h-12 w-full rounded-xl border border-slate-300 bg-white px-3 text-base text-slate-900 focus:border-slate-900 focus:outline-none';
   const lab = 'text-xs font-semibold text-slate-700';
+  const {
+    total
+  } = previewOf(f);
   return React.createElement("form", {
     onSubmit: submit,
-    className: "rounded-2xl border-2 border-dashed border-orange-300 bg-orange-50 p-4"
+    className: "space-y-3 rounded-2xl border-2 border-dashed border-orange-300 bg-orange-50 p-4"
   }, React.createElement("div", {
-    className: "mb-3 flex flex-wrap items-center gap-2"
+    className: "flex flex-wrap items-center gap-2"
   }, React.createElement("span", {
     className: "inline-flex items-center gap-1 text-sm font-bold text-orange-900"
   }, React.createElement(Plus, {
     size: 16
   }), "구매 내역 추가"), React.createElement("span", {
     className: "text-xs text-orange-800"
-  }, "품목명·수량만 넣고 Enter. 전에 산 품목은 거래처·단가가 자동으로 채워집니다")), recent.length > 0 && React.createElement("div", {
-    className: "mb-3 flex gap-2 overflow-x-auto pb-1"
+  }, "총액 = 구매 수량 × 가격. 내용량(600g, 10장 등)은 기록용이라 총액에 곱하지 않습니다")), recent.length > 0 && React.createElement("div", {
+    className: "flex gap-2 overflow-x-auto pb-1"
   }, recent.map(n => React.createElement("button", {
     key: n,
     type: "button",
     onClick: () => fillFrom(n),
     className: `h-10 shrink-0 rounded-full border px-3 text-sm font-bold ${n === f.name ? 'border-orange-600 bg-orange-600 text-white' : 'border-orange-300 bg-white text-orange-900'}`
-  }, n))), React.createElement("div", {
-    className: "grid grid-cols-2 gap-3 md:grid-cols-12"
-  }, React.createElement("label", {
-    className: `${lab} col-span-2 md:col-span-4`
-  }, "품목명", React.createElement("input", {
-    id: "qa-name",
-    list: "dl-names",
-    value: f.name,
-    maxLength: 60,
-    placeholder: "예: 냉동 대왕쭈꾸미",
-    onChange: e => set({
-      name: e.target.value
-    }),
-    onBlur: e => latestByName.has(e.target.value) && fillFrom(e.target.value),
-    className: `${field} mt-1`
-  })), React.createElement("div", {
-    className: `${lab} col-span-2 sm:col-span-1 md:col-span-3`
-  }, "수량", React.createElement("div", {
-    className: "mt-1 flex h-12 overflow-hidden rounded-xl border border-slate-300 bg-white"
-  }, React.createElement("button", {
-    type: "button",
-    "aria-label": "수량 감소",
-    onClick: () => set({
-      qty: Math.max(step, +(f.qty - step).toFixed(2))
-    }),
-    className: "w-11 shrink-0 text-slate-600 hover:bg-slate-100"
-  }, React.createElement(Minus, {
-    size: 18,
-    className: "mx-auto"
-  })), React.createElement("input", {
-    id: "qa-qty",
-    type: "number",
-    step: "any",
-    inputMode: "decimal",
-    value: f.qty,
-    onChange: e => set({
-      qty: +e.target.value
-    }),
-    className: "min-w-0 flex-1 text-center text-base font-bold tabular-nums focus:outline-none"
-  }), React.createElement("button", {
-    type: "button",
-    "aria-label": "수량 증가",
-    onClick: () => set({
-      qty: +(f.qty + step).toFixed(2)
-    }),
-    className: "w-11 shrink-0 text-slate-600 hover:bg-slate-100"
-  }, React.createElement(Plus, {
-    size: 18,
-    className: "mx-auto"
-  })), React.createElement("select", {
-    id: "qa-unit",
-    "aria-label": "단위",
-    value: f.unit,
-    onChange: e => set({
-      unit: e.target.value
-    }),
-    className: "shrink-0 border-l border-slate-300 bg-slate-50 px-2 text-sm font-semibold focus:outline-none"
-  }, UNITS.map(u => React.createElement("option", {
-    key: u
-  }, u))))), React.createElement("label", {
-    className: `${lab} md:col-span-2`
-  }, "단가 (원/", f.unit, ")", React.createElement("input", {
-    id: "qa-price",
-    type: "number",
-    inputMode: "numeric",
-    value: f.unit_price,
-    onChange: e => set({
-      unit_price: +e.target.value
-    }),
-    className: `${field} mt-1 tabular-nums`
-  })), React.createElement("label", {
-    className: `${lab} md:col-span-3`
-  }, "거래처", React.createElement("input", {
-    id: "qa-sup",
-    list: "dl-suppliers",
-    value: f.supplier,
-    placeholder: "예: 해심트레이딩",
-    onChange: e => set({
-      supplier: e.target.value
-    }),
-    className: `${field} mt-1`
-  })), React.createElement("label", {
-    className: `${lab} col-span-1 md:col-span-3`
-  }, "분류", React.createElement("select", {
-    id: "qa-cat",
-    value: f.category,
-    onChange: e => set({
-      category: e.target.value
-    }),
-    className: `${field} mt-1`
-  }, CATS.map(c => React.createElement("option", {
-    key: c
-  }, c)))), React.createElement("label", {
-    className: `${lab} col-span-1 md:col-span-3`
-  }, "브랜드", React.createElement("select", {
-    id: "qa-brand",
-    value: f.brand,
-    onChange: e => set({
-      brand: e.target.value
-    }),
-    className: `${field} mt-1`
-  }, React.createElement("option", {
-    value: ""
-  }, "선택 안 함"), BRANDS.map(b => React.createElement("option", {
-    key: b
-  }, b)))), React.createElement("div", {
-    className: "col-span-2 flex items-end md:col-span-6"
-  }, React.createElement("button", {
+  }, n))), React.createElement(PurchaseFields, {
+    f: f,
+    set: set,
+    idp: "qa",
+    places: places,
+    showName: true,
+    nameProps: {
+      onBlur: e => latestByName.has(e.target.value) && fillFrom(e.target.value)
+    }
+  }), React.createElement("div", {
+    className: "flex flex-col gap-2 sm:flex-row sm:items-center"
+  }, React.createElement("div", {
+    className: "flex-1"
+  }, React.createElement(PriceLine, {
+    f: f
+  })), React.createElement("button", {
     type: "submit",
-    className: "inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-orange-600 text-base font-bold text-white hover:bg-orange-700"
+    className: "inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-orange-600 px-6 text-base font-bold text-white hover:bg-orange-700"
   }, React.createElement(Plus, {
     size: 18
-  }), "추가 · ", fmtKRW((f.qty || 0) * (f.unit_price || 0))))), React.createElement("button", {
+  }), "추가", total !== null ? ` · ${fmtKRW(total)}` : '')), React.createElement("button", {
     type: "button",
     onClick: () => setMore(m => !m),
-    className: "mt-2 text-xs font-semibold text-orange-800 underline"
-  }, more ? '옵션 닫기' : '입고일·규격·메모 입력'), more && React.createElement("div", {
-    className: "mt-3 grid grid-cols-2 gap-3 md:grid-cols-3"
+    className: "text-xs font-semibold text-orange-800 underline"
+  }, more ? '옵션 닫기' : '규격·원산지·메모 입력'), more && React.createElement("div", {
+    className: "grid grid-cols-2 gap-3"
   }, React.createElement("label", {
-    className: lab
-  }, "입고일", React.createElement("input", {
-    id: "qa-date",
-    type: "date",
-    value: f.date,
-    onChange: e => set({
-      date: e.target.value
-    }),
-    className: `${field} mt-1`
-  })), React.createElement("label", {
     className: lab
   }, "규격·원산지", React.createElement("input", {
     id: "qa-spec",
     value: f.spec,
-    placeholder: "예: 200g×10 · 국내산",
+    placeholder: "예: 국내산",
     onChange: e => set({
       spec: e.target.value
     }),
     className: `${field} mt-1`
   })), React.createElement("label", {
-    className: `${lab} col-span-2 md:col-span-1`
+    className: lab
   }, "메모", React.createElement("input", {
     id: "qa-note",
     value: f.note,
@@ -772,23 +915,25 @@ const QuickAdd = memo(function QuickAdd({
     }),
     className: `${field} mt-1`
   }))), dup && React.createElement("div", {
-    className: "mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+    className: "flex flex-wrap items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900"
   }, React.createElement(AlertTriangle, {
     size: 16
-  }), "같은 날 같은 거래처의 ", React.createElement("b", null, dup.name), "(", fmtQty(dup.qty), dup.unit, ")이 이미 있습니다.", React.createElement("button", {
+  }), "같은 날 같은 구매처의 ", React.createElement("b", null, dup.name), "(", fmtQty(dup.qty), dup.unit, ")이 이미 있습니다.", React.createElement("button", {
     type: "button",
     onClick: () => {
-      onMerge(dup.id, f.qty);
+      onMerge(dup.id, numOrNull(f.qty) || 0);
       set({
         name: '',
-        qty: 1
+        qty: '1',
+        unit_price: '',
+        content_qty: ''
       });
     },
     className: "ml-auto inline-flex h-10 items-center gap-1 rounded-lg bg-amber-600 px-3 text-sm font-bold text-white"
   }, React.createElement(GitMerge, {
     size: 14
   }), "수량 합산")), err && React.createElement("p", {
-    className: "mt-2 flex items-center gap-1 text-sm font-semibold text-rose-700"
+    className: "flex items-center gap-1 text-sm font-semibold text-rose-700"
   }, React.createElement(AlertTriangle, {
     size: 14
   }), err));
@@ -927,6 +1072,7 @@ function StatsView({
     const byDate = {};
     const cat = {};
     const sup = {};
+    const place = {};
     const reason = {};
     const vd = {
       usable: {
@@ -955,6 +1101,8 @@ function StatsView({
       cat[it.category] = (cat[it.category] || 0) + amount;
       const sk = it.supplier || '거래처 미입력';
       sup[sk] = (sup[sk] || 0) + amount;
+      const pk = it.purchase_place || '구매처 미입력';
+      place[pk] = (place[pk] || 0) + amount;
       const k = it.ev_v || 'none';
       vd[k].n += 1;
       vd[k].amt += amount;
@@ -994,6 +1142,7 @@ function StatsView({
       verdict,
       cat: toBars(cat),
       sup: toBars(sup).slice(0, 8),
+      place: toBars(place).slice(0, 8),
       reason: Object.entries(reason).map(([name, 건수]) => ({
         name,
         건수
@@ -1174,8 +1323,13 @@ function StatsView({
   }, s.reason.length === 0 ? React.createElement(Empty, null, "보류·불가 사유 태그가 아직 없습니다.") : React.createElement("div", {
     className: "h-52"
   }, hBar(s.reason, '건수', '#e11d48', 80, 'n'))), React.createElement(Card, {
+    title: "구매처별 지출",
+    sub: "어디서 샀나 · 상위 8곳"
+  }, React.createElement("div", {
+    className: "h-60"
+  }, hBar(s.place, '지출', '#0369a1', 96))), React.createElement(Card, {
     title: "거래처별 지출",
-    sub: "상위 8곳"
+    sub: "제조·공급사 · 상위 8곳"
   }, React.createElement("div", {
     className: "h-60"
   }, hBar(s.sup, '지출', '#0f172a', 96))), React.createElement(Card, {
@@ -1272,6 +1426,7 @@ function App() {
   const [fVerdict, setFVerdict] = useState([]);
   const [fCat, setFCat] = useState([]);
   const [fBrand, setFBrand] = useState([]);
+  const [fPlace, setFPlace] = useState([]);
   const [expanded, setExpanded] = useState(null);
   const [toasts, setToasts] = useState([]);
   const [conflicts, setConflicts] = useState([]);
@@ -1610,9 +1765,10 @@ function App() {
   const tVerdict = useCallback(toggleIn(setFVerdict), []);
   const tCat = useCallback(toggleIn(setFCat), []);
   const tBrand = useCallback(toggleIn(setFBrand), []);
+  const tPlace = useCallback(toggleIn(setFPlace), []);
   useEffect(() => {
     setLimit(PAGE);
-  }, [q, fVerdict, fCat, fBrand, period]);
+  }, [q, fVerdict, fCat, fBrand, fPlace, period]);
   const searched = useMemo(() => {
     const tokens = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
     return items.filter(it => {
@@ -1622,9 +1778,10 @@ function App() {
       }
       if (fCat.length && !fCat.includes(it.category)) return false;
       if (fBrand.length && !fBrand.includes(it.brand || '')) return false;
+      if (fPlace.length && !fPlace.includes(it.purchase_place || '')) return false;
       return true;
     });
-  }, [items, q, fCat, fBrand]);
+  }, [items, q, fCat, fBrand, fPlace]);
   const periodFrom = useMemo(() => {
     const d = new Date();
     if (period === 'm1') return ymd(new Date(d.getFullYear(), d.getMonth(), 1));
@@ -1668,24 +1825,28 @@ function App() {
   }, [filtered]);
   const names = useMemo(() => [...new Set(items.map(i => i.name))].slice(0, 300), [items]);
   const suppliers = useMemo(() => [...new Set(items.map(i => i.supplier).filter(Boolean))].slice(0, 300), [items]);
+  const places = useMemo(() => [...new Set([...items].sort(byDateDesc).map(i => i.purchase_place).filter(Boolean))].slice(0, 8), [items]);
+  const allPlaces = useMemo(() => [...new Set(items.map(i => i.purchase_place).filter(Boolean))].slice(0, 300), [items]);
   const brandChips = useMemo(() => [...new Set([...BRANDS, ...items.map(i => i.brand).filter(Boolean)])], [items]);
-  const filterActive = q || fVerdict.length || fCat.length || fBrand.length;
+  const filterActive = q || fVerdict.length || fCat.length || fBrand.length || fPlace.length;
   const clearFilters = () => {
     setQuery('');
     setFVerdict([]);
     setFCat([]);
     setFBrand([]);
+    setFPlace([]);
   };
   const renderRow = useCallback(it => React.createElement(PartRow, {
     key: it.id,
     item: it,
+    places: places,
     expanded: expanded?.id === it.id ? expanded.mode : false,
     onVerdict: setVerdict,
     onEval: commitEval,
     onToggleExpand: toggleExpand,
     onUpdate: updateItem,
     onRemove: removeItem
-  }), [expanded, setVerdict, commitEval, toggleExpand, updateItem, removeItem]);
+  }), [expanded, places, setVerdict, commitEval, toggleExpand, updateItem, removeItem]);
   const saveAuthor = e => {
     e.preventDefault();
     const n = authorDraft.trim().slice(0, 20);
@@ -1713,6 +1874,11 @@ function App() {
   }, React.createElement("datalist", {
     id: "dl-names"
   }, names.map(n => React.createElement("option", {
+    key: n,
+    value: n
+  }))), React.createElement("datalist", {
+    id: "dl-places"
+  }, allPlaces.map(n => React.createElement("option", {
     key: n,
     value: n
   }))), React.createElement("datalist", {
@@ -1825,7 +1991,7 @@ function App() {
     ref: searchRef,
     value: query,
     onChange: e => setQuery(e.target.value),
-    placeholder: "품목·거래처·원산지·한 줄 평·작성자 검색  ( / )",
+    placeholder: "품목·구매처·거래처·한 줄 평·작성자 검색  ( / )",
     className: "h-12 w-full rounded-xl border border-slate-300 bg-slate-50 pl-11 pr-24 text-base focus:border-slate-900 focus:bg-white focus:outline-none"
   }), React.createElement("span", {
     className: "absolute right-3 top-1/2 flex -translate-y-1/2 items-center gap-1"
@@ -1884,7 +2050,14 @@ function App() {
     key: b,
     active: fBrand.includes(b),
     onClick: () => tBrand(b)
-  }, b)), filterActive ? React.createElement("button", {
+  }, b)), places.length > 0 && React.createElement("span", {
+    className: "mx-1 w-px shrink-0 bg-slate-200"
+  }), places.map(p => React.createElement(Chip, {
+    key: p,
+    active: fPlace.includes(p),
+    onClick: () => tPlace(p),
+    dot: "bg-sky-500"
+  }, p)), filterActive ? React.createElement("button", {
     type: "button",
     onClick: clearFilters,
     className: "inline-flex h-11 shrink-0 items-center gap-1 rounded-full px-4 text-sm font-bold text-orange-700 hover:bg-orange-50"
@@ -1957,6 +2130,7 @@ function App() {
     className: "space-y-3"
   }, React.createElement(QuickAdd, {
     items: items,
+    places: places,
     onAdd: addItem,
     onMerge: mergeQty
   }), React.createElement("div", {
