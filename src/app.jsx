@@ -376,7 +376,6 @@ const QuickAdd = memo(function QuickAdd({ items, places, onAdd, onMerge }) {
     [...items].sort(byDateDesc).forEach(it => { if (!m.has(it.name)) m.set(it.name, it); });
     return m;
   }, [items]);
-  const recent = useMemo(() => [...latestByName.keys()].slice(0, 6), [latestByName]);
 
   const blank = () => ({ date: '', name: '', purchase_place: '', supplier: '', qty: '1', unit: '봉', unit_price: '', content_qty: '', content_unit: 'g', category: '기타', brand: '', spec: '', note: '' });
   const [f, setF] = useState(blank);
@@ -412,16 +411,7 @@ const QuickAdd = memo(function QuickAdd({ items, places, onAdd, onMerge }) {
     <form onSubmit={submit} className="space-y-3 rounded-2xl border-2 border-dashed border-orange-300 bg-orange-50 p-4">
       <div className="flex flex-wrap items-center gap-2">
         <span className="inline-flex items-center gap-1 text-sm font-bold text-orange-900"><Plus size={16} />구매 내역 추가</span>
-        <span className="text-xs text-orange-800">총액 = 구매 수량 × 가격. 내용량(600g, 10장 등)은 기록용이라 총액에 곱하지 않습니다</span>
       </div>
-      {recent.length > 0 && (
-        <div className="flex gap-2 overflow-x-auto pb-1">
-          {recent.map(n => (
-            <button key={n} type="button" onClick={() => fillFrom(n)}
-              className={`h-10 shrink-0 rounded-full border px-3 text-sm font-bold ${n === f.name ? 'border-orange-600 bg-orange-600 text-white' : 'border-orange-300 bg-white text-orange-900'}`}>{n}</button>
-          ))}
-        </div>
-      )}
       <PurchaseFields f={f} set={set} idp="qa" places={places} showName
         nameProps={{ onBlur: e => latestByName.has(e.target.value) && fillFrom(e.target.value) }} />
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center">

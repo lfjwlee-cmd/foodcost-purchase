@@ -780,7 +780,6 @@ const QuickAdd = memo(function QuickAdd({
     });
     return m;
   }, [items]);
-  const recent = useMemo(() => [...latestByName.keys()].slice(0, 6), [latestByName]);
   const blank = () => ({
     date: '',
     name: '',
@@ -860,16 +859,7 @@ const QuickAdd = memo(function QuickAdd({
     className: "inline-flex items-center gap-1 text-sm font-bold text-orange-900"
   }, React.createElement(Plus, {
     size: 16
-  }), "구매 내역 추가"), React.createElement("span", {
-    className: "text-xs text-orange-800"
-  }, "총액 = 구매 수량 × 가격. 내용량(600g, 10장 등)은 기록용이라 총액에 곱하지 않습니다")), recent.length > 0 && React.createElement("div", {
-    className: "flex gap-2 overflow-x-auto pb-1"
-  }, recent.map(n => React.createElement("button", {
-    key: n,
-    type: "button",
-    onClick: () => fillFrom(n),
-    className: `h-10 shrink-0 rounded-full border px-3 text-sm font-bold ${n === f.name ? 'border-orange-600 bg-orange-600 text-white' : 'border-orange-300 bg-white text-orange-900'}`
-  }, n))), React.createElement(PurchaseFields, {
+  }), "구매 내역 추가")), React.createElement(PurchaseFields, {
     f: f,
     set: set,
     idp: "qa",
