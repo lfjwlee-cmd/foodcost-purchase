@@ -100,6 +100,7 @@ const pad = (n, l = 2) => String(n).padStart(l, '0');
 const ymd = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const todayStr = () => ymd(new Date());
 const fmtKRW = n => '₩' + Math.round(n).toLocaleString('ko-KR');
+const fmtWon = n => Math.round(Number(n) || 0).toLocaleString('ko-KR') + '원';
 const fmtMan = n => n >= 100000000 ? (n / 100000000).toFixed(2) + '억' : n >= 10000 ? Math.round(n / 10000) + '만' : Math.round(n).toLocaleString('ko-KR');
 const fmtAt = iso => {
   if (!iso) return '';
@@ -938,6 +939,123 @@ const QuickAdd = memo(function QuickAdd({
     size: 14
   }), err));
 });
+const NO_PLACE = '구매처 미입력';
+const groupItems = items => {
+  const places = new Map();
+  items.forEach(it => {
+    const pk = it.purchase_place || NO_PLACE;
+    if (!places.has(pk)) places.set(pk, {
+      name: pk,
+      total: 0,
+      items: [],
+      cats: new Map()
+    });
+    const g = places.get(pk);
+    const amt = derive(it).amount;
+    g.total += amt;
+    g.items.push(it);
+    if (!g.cats.has(it.category)) g.cats.set(it.category, {
+      name: it.category,
+      total: 0,
+      items: []
+    });
+    const c = g.cats.get(it.category);
+    c.total += amt;
+    c.items.push(it);
+  });
+  const byTotal = (a, b) => (a.name === NO_PLACE) - (b.name === NO_PLACE) || b.total - a.total;
+  return [...places.values()].sort(byTotal).map(g => ({
+    ...g,
+    cats: [...g.cats.values()].sort((a, b) => b.total - a.total)
+  }));
+};
+const readOpen = () => {
+  try {
+    return JSON.parse(lsGet('pur_open') || '{}');
+  } catch (e) {
+    return {};
+  }
+};
+function GroupedList({
+  items,
+  renderRow,
+  forceOpen,
+  openAll
+}) {
+  const groups = useMemo(() => groupItems(items), [items]);
+  const [open, setOpen] = useState(readOpen);
+  useEffect(() => {
+    lsSet('pur_open', JSON.stringify(open));
+  }, [open]);
+  useEffect(() => {
+    if (openAll === null || openAll === undefined) return;
+    const next = {};
+    groups.forEach(g => {
+      next['p:' + g.name] = openAll.v;
+      g.cats.forEach(c => {
+        next['c:' + g.name + '|' + c.name] = openAll.v;
+      });
+    });
+    setOpen(o => ({
+      ...o,
+      ...next
+    }));
+  }, [openAll]);
+  const isOpen = k => forceOpen || !!open[k];
+  const toggle = k => setOpen(o => ({
+    ...o,
+    [k]: !o[k]
+  }));
+  if (!groups.length) return null;
+  return React.createElement("div", {
+    className: "space-y-3"
+  }, groups.map(g => {
+    const pk = 'p:' + g.name;
+    const po = isOpen(pk);
+    return React.createElement("section", {
+      key: g.name,
+      className: "overflow-hidden rounded-2xl border border-slate-200 bg-white"
+    }, React.createElement("button", {
+      type: "button",
+      onClick: () => toggle(pk),
+      "aria-expanded": po,
+      className: "flex w-full items-center gap-3 px-4 py-3.5 text-left hover:bg-slate-50 touch-manipulation"
+    }, React.createElement(ChevronRight, {
+      size: 20,
+      className: `shrink-0 text-slate-400 transition ${po ? 'rotate-90' : ''}`
+    }), React.createElement("span", {
+      className: `rounded-lg px-2.5 py-1 text-sm font-bold ${g.name === NO_PLACE ? 'bg-slate-100 text-slate-500' : 'bg-sky-100 text-sky-900'}`
+    }, g.name), React.createElement("span", {
+      className: "text-sm text-slate-500"
+    }, g.items.length, "건 · ", g.cats.map(c => c.name).join(' · ')), React.createElement("b", {
+      className: "ml-auto text-lg font-extrabold tabular-nums text-slate-900"
+    }, fmtWon(g.total))), po && React.createElement("div", {
+      className: "space-y-2 border-t border-slate-100 bg-slate-50 p-3"
+    }, g.cats.map(c => {
+      const ck = 'c:' + g.name + '|' + c.name;
+      const co = isOpen(ck);
+      return React.createElement("div", {
+        key: c.name
+      }, React.createElement("button", {
+        type: "button",
+        onClick: () => toggle(ck),
+        "aria-expanded": co,
+        className: "flex w-full items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-left hover:border-slate-400 touch-manipulation"
+      }, React.createElement(ChevronRight, {
+        size: 16,
+        className: `shrink-0 text-slate-400 transition ${co ? 'rotate-90' : ''}`
+      }), React.createElement("span", {
+        className: "text-sm font-bold text-slate-800"
+      }, c.name), React.createElement("span", {
+        className: "truncate text-xs text-slate-500"
+      }, c.items.length, "건 · ", c.items.map(it => it.name).join(', ')), React.createElement("b", {
+        className: "ml-auto shrink-0 text-sm font-bold tabular-nums text-slate-900"
+      }, fmtWon(c.total))), co && React.createElement("div", {
+        className: "mt-2 space-y-2 pl-2 sm:pl-4"
+      }, c.items.map(renderRow)));
+    })));
+  }));
+}
 function CalendarView({
   items,
   month,
@@ -1014,25 +1132,37 @@ function CalendarView({
   }, cells.map((d, i) => {
     if (!d) return React.createElement("div", {
       key: i,
-      className: "h-20 rounded-xl bg-slate-50 sm:h-24 md:h-28"
+      className: "h-20 rounded-xl bg-slate-50 sm:h-24 md:h-36"
     });
     const key = `${monthKey}-${pad(d)}`;
     const list = byDay[key] || [];
     const total = list.reduce((s, it) => s + derive(it).amount, 0);
+    const byPlace = groupItems(list);
     const isSel = selDay === key;
     const dow = i % 7;
     return React.createElement("button", {
       key: i,
       type: "button",
       onClick: () => setSelDay(isSel ? null : key),
-      className: `flex h-20 flex-col items-stretch rounded-xl border p-1.5 text-left transition touch-manipulation sm:h-24 sm:p-2 md:h-28 ${isSel ? 'border-slate-900 bg-slate-900 text-white' : list.length ? 'border-slate-200 bg-white hover:border-slate-500' : 'border-transparent bg-slate-50 text-slate-400'} ${key === today && !isSel ? 'ring-2 ring-orange-500' : ''}`
+      className: `flex h-20 flex-col items-stretch rounded-xl border p-1.5 text-left transition touch-manipulation sm:h-24 sm:p-2 md:h-36 ${isSel ? 'border-slate-900 bg-slate-900 text-white' : list.length ? 'border-slate-200 bg-white hover:border-slate-500' : 'border-transparent bg-slate-50 text-slate-400'} ${key === today && !isSel ? 'ring-2 ring-orange-500' : ''}`
     }, React.createElement("span", {
       className: `text-sm font-bold ${!isSel && dow === 0 ? 'text-rose-600' : !isSel && dow === 6 ? 'text-sky-700' : ''}`
     }, d), list.length > 0 && React.createElement(React.Fragment, null, React.createElement("span", {
-      className: `hidden text-xs font-bold tabular-nums sm:block ${isSel ? 'text-orange-300' : 'text-slate-900'}`
-    }, fmtMan(total)), React.createElement("span", {
-      className: `text-xs ${isSel ? 'text-slate-300' : 'text-slate-500'}`
+      className: `hidden truncate text-xs font-bold tabular-nums sm:block ${isSel ? 'text-orange-300' : 'text-slate-900'}`
+    }, fmtWon(total)), React.createElement("span", {
+      className: `text-xs sm:hidden ${isSel ? 'text-slate-300' : 'text-slate-500'}`
     }, list.length, "건"), React.createElement("span", {
+      className: "mt-0.5 hidden space-y-0.5 md:block"
+    }, byPlace.slice(0, 3).map(g => React.createElement("span", {
+      key: g.name,
+      className: `flex justify-between gap-1 text-xs leading-tight ${isSel ? 'text-slate-200' : 'text-slate-600'}`
+    }, React.createElement("span", {
+      className: "truncate"
+    }, g.name === NO_PLACE ? '미입력' : g.name), React.createElement("span", {
+      className: "shrink-0 tabular-nums"
+    }, fmtWon(g.total)))), byPlace.length > 3 && React.createElement("span", {
+      className: `block text-xs ${isSel ? 'text-slate-300' : 'text-slate-400'}`
+    }, "외 ", byPlace.length - 3, "곳")), React.createElement("span", {
       className: "mt-auto flex flex-wrap gap-1"
     }, list.slice(0, 6).map(it => React.createElement("span", {
       key: it.id,
@@ -1049,7 +1179,11 @@ function CalendarView({
     className: "space-y-3"
   }, React.createElement("h4", {
     className: "text-sm font-bold text-slate-700"
-  }, selDay, " (", WEEK[dowOf(selDay)], ") 입고 ", selItems.length, "건"), selItems.length ? selItems.map(renderRow) : React.createElement("p", {
+  }, selDay, " (", WEEK[dowOf(selDay)], ") 입고 ", selItems.length, "건"), selItems.length ? React.createElement(GroupedList, {
+    items: selItems,
+    renderRow: renderRow,
+    forceOpen: true
+  }) : React.createElement("p", {
     className: "rounded-2xl border border-slate-200 bg-white p-6 text-center text-sm text-slate-500"
   }, "이 날짜에 등록된 구매 내역이 없습니다.")) : React.createElement("p", {
     className: "text-center text-sm text-slate-500"
@@ -1315,7 +1449,7 @@ function StatsView({
     className: "text-xs text-slate-400"
   }, d.n, "건")), React.createElement("b", {
     className: "tabular-nums text-slate-900"
-  }, fmtMan(d.value)), React.createElement("span", {
+  }, fmtWon(d.value)), React.createElement("span", {
     className: "w-10 text-right text-xs tabular-nums text-slate-500"
   }, vTotal ? Math.round(d.value / vTotal * 100) : 0, "%")))))), React.createElement(Card, {
     title: "보류·불가 사유",
@@ -1401,7 +1535,6 @@ const PERIODS = [{
   k: 'all',
   label: '전체'
 }];
-const PAGE = 60;
 function App() {
   const [status, setStatus] = useState('loading');
   const [loadErr, setLoadErr] = useState('');
@@ -1433,7 +1566,7 @@ function App() {
   const [activity, setActivity] = useState([]);
   const [inflight, setInflight] = useState(0);
   const [rt, setRt] = useState('connecting');
-  const [limit, setLimit] = useState(PAGE);
+  const [openAll, setOpenAll] = useState(null);
   const now = new Date();
   const [month, setMonth] = useState({
     y: now.getFullYear(),
@@ -1766,9 +1899,6 @@ function App() {
   const tCat = useCallback(toggleIn(setFCat), []);
   const tBrand = useCallback(toggleIn(setFBrand), []);
   const tPlace = useCallback(toggleIn(setFPlace), []);
-  useEffect(() => {
-    setLimit(PAGE);
-  }, [q, fVerdict, fCat, fBrand, fPlace, period]);
   const searched = useMemo(() => {
     const tokens = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
     return items.filter(it => {
@@ -2137,13 +2267,28 @@ function App() {
     className: "flex items-center justify-between px-1 text-sm text-slate-500"
   }, React.createElement("span", null, React.createElement("b", {
     className: "text-slate-900"
-  }, filtered.length), "건 ", filterActive || period !== 'all' ? `(전체 ${items.length}건)` : ''), React.createElement("span", {
-    className: "hidden sm:inline"
-  }, "판정 버튼 한 번 = 저장 · 다시 누르면 해제 · 5초간 되돌리기")), filtered.length ? React.createElement(React.Fragment, null, filtered.slice(0, limit).map(renderRow), filtered.length > limit && React.createElement("button", {
+  }, filtered.length), "건 ", filterActive || period !== 'all' ? `(전체 ${items.length}건)` : ''), filtered.length > 0 && !q && React.createElement("span", {
+    className: "flex gap-1"
+  }, React.createElement("button", {
     type: "button",
-    onClick: () => setLimit(l => l + PAGE),
-    className: "h-12 w-full rounded-2xl border border-slate-300 bg-white text-sm font-bold text-slate-700 hover:bg-slate-50"
-  }, "더 보기 (", filtered.length - limit, "건 남음)")) : React.createElement("div", {
+    onClick: () => setOpenAll({
+      v: true,
+      t: Date.now()
+    }),
+    className: "h-9 rounded-lg px-3 text-sm font-semibold text-slate-600 hover:bg-slate-200"
+  }, "모두 펼치기"), React.createElement("button", {
+    type: "button",
+    onClick: () => setOpenAll({
+      v: false,
+      t: Date.now()
+    }),
+    className: "h-9 rounded-lg px-3 text-sm font-semibold text-slate-600 hover:bg-slate-200"
+  }, "모두 접기"))), filtered.length ? React.createElement(GroupedList, {
+    items: filtered,
+    renderRow: renderRow,
+    forceOpen: !!q,
+    openAll: openAll
+  }) : React.createElement("div", {
     className: "rounded-2xl border border-slate-200 bg-white p-10 text-center"
   }, items.length === 0 ? React.createElement(React.Fragment, null, React.createElement("p", {
     className: "font-bold text-slate-700"

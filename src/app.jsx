@@ -33,6 +33,7 @@ const pad = (n, l = 2) => String(n).padStart(l, '0');
 const ymd = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const todayStr = () => ymd(new Date());
 const fmtKRW = n => '₩' + Math.round(n).toLocaleString('ko-KR');
+const fmtWon = n => Math.round(Number(n) || 0).toLocaleString('ko-KR') + '원';
 const fmtMan = n => (n >= 100000000 ? (n / 100000000).toFixed(2) + '억' : n >= 10000 ? Math.round(n / 10000) + '만' : Math.round(n).toLocaleString('ko-KR'));
 const fmtAt = iso => { if (!iso) return ''; const d = new Date(iso); return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
 const hm = () => { const d = new Date(); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
@@ -447,6 +448,76 @@ const QuickAdd = memo(function QuickAdd({ items, places, onAdd, onMerge }) {
   );
 });
 
+/* ────────────────────────────── 묶어 보기: 구매처 → 분류 → 품목 ────────────────────────────── */
+const NO_PLACE = '구매처 미입력';
+const groupItems = items => {
+  const places = new Map();
+  items.forEach(it => {
+    const pk = it.purchase_place || NO_PLACE;
+    if (!places.has(pk)) places.set(pk, { name: pk, total: 0, items: [], cats: new Map() });
+    const g = places.get(pk); const amt = derive(it).amount;
+    g.total += amt; g.items.push(it);
+    if (!g.cats.has(it.category)) g.cats.set(it.category, { name: it.category, total: 0, items: [] });
+    const c = g.cats.get(it.category); c.total += amt; c.items.push(it);
+  });
+  const byTotal = (a, b) => (a.name === NO_PLACE) - (b.name === NO_PLACE) || b.total - a.total;
+  return [...places.values()].sort(byTotal).map(g => ({ ...g, cats: [...g.cats.values()].sort((a, b) => b.total - a.total) }));
+};
+const readOpen = () => { try { return JSON.parse(lsGet('pur_open') || '{}'); } catch (e) { return {}; } };
+
+function GroupedList({ items, renderRow, forceOpen, openAll }) {
+  const groups = useMemo(() => groupItems(items), [items]);
+  const [open, setOpen] = useState(readOpen);
+  useEffect(() => { lsSet('pur_open', JSON.stringify(open)); }, [open]);
+  // 상위에서 "모두 펼치기/접기"를 누르면 현재 보이는 묶음 전체에 적용
+  useEffect(() => {
+    if (openAll === null || openAll === undefined) return;
+    const next = {};
+    groups.forEach(g => { next['p:' + g.name] = openAll.v; g.cats.forEach(c => { next['c:' + g.name + '|' + c.name] = openAll.v; }); });
+    setOpen(o => ({ ...o, ...next }));
+  }, [openAll]);
+  const isOpen = k => forceOpen || !!open[k];
+  const toggle = k => setOpen(o => ({ ...o, [k]: !o[k] }));
+  if (!groups.length) return null;
+  return (
+    <div className="space-y-3">
+      {groups.map(g => {
+        const pk = 'p:' + g.name; const po = isOpen(pk);
+        return (
+          <section key={g.name} className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+            <button type="button" onClick={() => toggle(pk)} aria-expanded={po}
+              className="flex w-full items-center gap-3 px-4 py-3.5 text-left hover:bg-slate-50 touch-manipulation">
+              <ChevronRight size={20} className={`shrink-0 text-slate-400 transition ${po ? 'rotate-90' : ''}`} />
+              <span className={`rounded-lg px-2.5 py-1 text-sm font-bold ${g.name === NO_PLACE ? 'bg-slate-100 text-slate-500' : 'bg-sky-100 text-sky-900'}`}>{g.name}</span>
+              <span className="text-sm text-slate-500">{g.items.length}건 · {g.cats.map(c => c.name).join(' · ')}</span>
+              <b className="ml-auto text-lg font-extrabold tabular-nums text-slate-900">{fmtWon(g.total)}</b>
+            </button>
+            {po && (
+              <div className="space-y-2 border-t border-slate-100 bg-slate-50 p-3">
+                {g.cats.map(c => {
+                  const ck = 'c:' + g.name + '|' + c.name; const co = isOpen(ck);
+                  return (
+                    <div key={c.name}>
+                      <button type="button" onClick={() => toggle(ck)} aria-expanded={co}
+                        className="flex w-full items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-left hover:border-slate-400 touch-manipulation">
+                        <ChevronRight size={16} className={`shrink-0 text-slate-400 transition ${co ? 'rotate-90' : ''}`} />
+                        <span className="text-sm font-bold text-slate-800">{c.name}</span>
+                        <span className="truncate text-xs text-slate-500">{c.items.length}건 · {c.items.map(it => it.name).join(', ')}</span>
+                        <b className="ml-auto shrink-0 text-sm font-bold tabular-nums text-slate-900">{fmtWon(c.total)}</b>
+                      </button>
+                      {co && <div className="mt-2 space-y-2 pl-2 sm:pl-4">{c.items.map(renderRow)}</div>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
 /* ────────────────────────────── 달력 뷰 ────────────────────────────── */
 function CalendarView({ items, month, setMonth, selDay, setSelDay, renderRow }) {
   const { y, m } = month;
@@ -480,19 +551,29 @@ function CalendarView({ items, month, setMonth, selDay, setSelDay, renderRow }) 
         </div>
         <div className="grid grid-cols-7 gap-1">
           {cells.map((d, i) => {
-            if (!d) return <div key={i} className="h-20 rounded-xl bg-slate-50 sm:h-24 md:h-28" />;
+            if (!d) return <div key={i} className="h-20 rounded-xl bg-slate-50 sm:h-24 md:h-36" />;
             const key = `${monthKey}-${pad(d)}`;
             const list = byDay[key] || [];
             const total = list.reduce((s, it) => s + derive(it).amount, 0);
+            const byPlace = groupItems(list);
             const isSel = selDay === key; const dow = i % 7;
             return (
               <button key={i} type="button" onClick={() => setSelDay(isSel ? null : key)}
-                className={`flex h-20 flex-col items-stretch rounded-xl border p-1.5 text-left transition touch-manipulation sm:h-24 sm:p-2 md:h-28 ${isSel ? 'border-slate-900 bg-slate-900 text-white' : list.length ? 'border-slate-200 bg-white hover:border-slate-500' : 'border-transparent bg-slate-50 text-slate-400'} ${key === today && !isSel ? 'ring-2 ring-orange-500' : ''}`}>
+                className={`flex h-20 flex-col items-stretch rounded-xl border p-1.5 text-left transition touch-manipulation sm:h-24 sm:p-2 md:h-36 ${isSel ? 'border-slate-900 bg-slate-900 text-white' : list.length ? 'border-slate-200 bg-white hover:border-slate-500' : 'border-transparent bg-slate-50 text-slate-400'} ${key === today && !isSel ? 'ring-2 ring-orange-500' : ''}`}>
                 <span className={`text-sm font-bold ${!isSel && dow === 0 ? 'text-rose-600' : !isSel && dow === 6 ? 'text-sky-700' : ''}`}>{d}</span>
                 {list.length > 0 && (
                   <>
-                    <span className={`hidden text-xs font-bold tabular-nums sm:block ${isSel ? 'text-orange-300' : 'text-slate-900'}`}>{fmtMan(total)}</span>
-                    <span className={`text-xs ${isSel ? 'text-slate-300' : 'text-slate-500'}`}>{list.length}건</span>
+                    <span className={`hidden truncate text-xs font-bold tabular-nums sm:block ${isSel ? 'text-orange-300' : 'text-slate-900'}`}>{fmtWon(total)}</span>
+                    <span className={`text-xs sm:hidden ${isSel ? 'text-slate-300' : 'text-slate-500'}`}>{list.length}건</span>
+                    <span className="mt-0.5 hidden space-y-0.5 md:block">
+                      {byPlace.slice(0, 3).map(g => (
+                        <span key={g.name} className={`flex justify-between gap-1 text-xs leading-tight ${isSel ? 'text-slate-200' : 'text-slate-600'}`}>
+                          <span className="truncate">{g.name === NO_PLACE ? '미입력' : g.name}</span>
+                          <span className="shrink-0 tabular-nums">{fmtWon(g.total)}</span>
+                        </span>
+                      ))}
+                      {byPlace.length > 3 && <span className={`block text-xs ${isSel ? 'text-slate-300' : 'text-slate-400'}`}>외 {byPlace.length - 3}곳</span>}
+                    </span>
                     <span className="mt-auto flex flex-wrap gap-1">{list.slice(0, 6).map(it => <span key={it.id} className={`h-2 w-2 rounded-full ${vmeta(it.ev_v).dot}`} />)}</span>
                   </>
                 )}
@@ -507,7 +588,7 @@ function CalendarView({ items, month, setMonth, selDay, setSelDay, renderRow }) 
       {selDay ? (
         <div className="space-y-3">
           <h4 className="text-sm font-bold text-slate-700">{selDay} ({WEEK[dowOf(selDay)]}) 입고 {selItems.length}건</h4>
-          {selItems.length ? selItems.map(renderRow) : <p className="rounded-2xl border border-slate-200 bg-white p-6 text-center text-sm text-slate-500">이 날짜에 등록된 구매 내역이 없습니다.</p>}
+          {selItems.length ? <GroupedList items={selItems} renderRow={renderRow} forceOpen /> : <p className="rounded-2xl border border-slate-200 bg-white p-6 text-center text-sm text-slate-500">이 날짜에 등록된 구매 내역이 없습니다.</p>}
         </div>
       ) : (
         <p className="text-center text-sm text-slate-500">날짜를 누르면 그날 입고된 품목을 바로 판정할 수 있습니다.</p>
@@ -597,7 +678,7 @@ function StatsView({ items, activity }) {
               <li key={d.key} className="flex items-center gap-2 text-sm">
                 <span className="h-3 w-3 shrink-0 rounded-sm" style={{ background: d.hex }} />
                 <span className="flex-1 text-slate-700">{d.name} <span className="text-xs text-slate-400">{d.n}건</span></span>
-                <b className="tabular-nums text-slate-900">{fmtMan(d.value)}</b>
+                <b className="tabular-nums text-slate-900">{fmtWon(d.value)}</b>
                 <span className="w-10 text-right text-xs tabular-nums text-slate-500">{vTotal ? Math.round((d.value / vTotal) * 100) : 0}%</span>
               </li>
             ))}
@@ -654,7 +735,6 @@ function StatsView({ items, activity }) {
 
 /* ────────────────────────────── 메인 ────────────────────────────── */
 const PERIODS = [{ k: 'm1', label: '이번 달' }, { k: 'm3', label: '최근 3개월' }, { k: 'all', label: '전체' }];
-const PAGE = 60;
 
 function App() {
   const [status, setStatus] = useState('loading'); // loading | ready | error
@@ -683,7 +763,7 @@ function App() {
   const [activity, setActivity] = useState([]);
   const [inflight, setInflight] = useState(0);
   const [rt, setRt] = useState('connecting');
-  const [limit, setLimit] = useState(PAGE);
+  const [openAll, setOpenAll] = useState(null);
   const now = new Date();
   const [month, setMonth] = useState({ y: now.getFullYear(), m: now.getMonth() });
   const [selDay, setSelDay] = useState(null);
@@ -842,7 +922,6 @@ function App() {
   const tCat = useCallback(toggleIn(setFCat), []);
   const tBrand = useCallback(toggleIn(setFBrand), []);
   const tPlace = useCallback(toggleIn(setFPlace), []);
-  useEffect(() => { setLimit(PAGE); }, [q, fVerdict, fCat, fBrand, fPlace, period]);
 
   const searched = useMemo(() => {
     const tokens = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -1025,13 +1104,16 @@ function App() {
             <QuickAdd items={items} places={places} onAdd={addItem} onMerge={mergeQty} />
             <div className="flex items-center justify-between px-1 text-sm text-slate-500">
               <span><b className="text-slate-900">{filtered.length}</b>건 {filterActive || period !== 'all' ? `(전체 ${items.length}건)` : ''}</span>
-              <span className="hidden sm:inline">판정 버튼 한 번 = 저장 · 다시 누르면 해제 · 5초간 되돌리기</span>
+              {filtered.length > 0 && !q && (
+                <span className="flex gap-1">
+                  <button type="button" onClick={() => setOpenAll({ v: true, t: Date.now() })} className="h-9 rounded-lg px-3 text-sm font-semibold text-slate-600 hover:bg-slate-200">모두 펼치기</button>
+                  <button type="button" onClick={() => setOpenAll({ v: false, t: Date.now() })} className="h-9 rounded-lg px-3 text-sm font-semibold text-slate-600 hover:bg-slate-200">모두 접기</button>
+                </span>
+              )}
             </div>
             {filtered.length ? (
-              <>
-                {filtered.slice(0, limit).map(renderRow)}
-                {filtered.length > limit && <button type="button" onClick={() => setLimit(l => l + PAGE)} className="h-12 w-full rounded-2xl border border-slate-300 bg-white text-sm font-bold text-slate-700 hover:bg-slate-50">더 보기 ({filtered.length - limit}건 남음)</button>}
-              </>
+              // 검색 중에는 찾은 품목이 바로 보이도록 전부 펼친다
+              <GroupedList items={filtered} renderRow={renderRow} forceOpen={!!q} openAll={openAll} />
             ) : (
               <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center">
                 {items.length === 0 ? (
