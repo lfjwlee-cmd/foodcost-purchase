@@ -57,7 +57,7 @@ const sb = window.supabase && CFG.SUPABASE_URL ? window.supabase.createClient(CF
   }
 }) : null;
 const CATS = ['육류', '해산물', '농산물', '가공품', '소스·양념', '기타'];
-const UNITS = ['봉', '팩', '묶음', '단', '개', '박스', 'kg'];
+const UNITS = ['봉', '팩', '묶음', '단', '개', '박스', '병'];
 const CONTENT_UNITS = ['g', 'kg', 'ml', 'L', '장', '개'];
 const BRANDS = ['삼대미역', '인생아구찜', '어화락', '공통'];
 const VERDICT = {
@@ -266,8 +266,11 @@ const toPayload = f => {
   const qty = numOrNull(f.qty),
     price = numOrNull(f.unit_price),
     cq = numOrNull(f.content_qty);
-  if (!(qty > 0) || qty > 1000000) return {
-    err: '구매 수량을 입력하세요 (0보다 큰 수).'
+  if (!(qty > 0) || qty > 100000) return {
+    err: `몇 ${f.unit} 샀는지 입력하세요.`
+  };
+  if (!Number.isInteger(qty)) return {
+    err: `구매 수량은 ${f.unit} 개수(1, 2, 3…)로 입력하세요. 300g 같은 무게는 '1${f.unit}에 든 양' 칸에 넣으세요.`
   };
   if (price === null || price < 0 || price > 100000000) return {
     err: `가격(1${f.unit}당)을 입력하세요.`
@@ -334,7 +337,7 @@ function PurchaseFields({
 }) {
   const field = 'h-12 w-full rounded-xl border border-slate-300 bg-white px-3 text-base text-slate-900 focus:border-slate-900 focus:outline-none';
   const lab = 'text-xs font-semibold text-slate-700';
-  const step = f.unit === 'kg' ? 0.5 : 1;
+  const step = 1;
   const bump = d => {
     const q = numOrNull(f.qty) || 0;
     set({
@@ -396,7 +399,7 @@ function PurchaseFields({
     className: `h-8 shrink-0 rounded-full border px-3 text-xs font-bold ${f.purchase_place === p ? 'border-sky-700 bg-sky-700 text-white' : 'border-sky-200 bg-white text-sky-800'}`
   }, p)))), React.createElement("div", {
     className: `${lab} md:col-span-3`
-  }, "구매 수량", React.createElement("div", {
+  }, "몇 ", f.unit, " 샀나요?", React.createElement("div", {
     className: "mt-1 flex h-12 overflow-hidden rounded-xl border border-slate-300 bg-white"
   }, React.createElement("button", {
     type: "button",
@@ -409,9 +412,9 @@ function PurchaseFields({
   })), React.createElement("input", {
     id: `${idp}-qty`,
     type: "number",
-    step: "any",
-    min: "0",
-    inputMode: "decimal",
+    step: "1",
+    min: "1",
+    inputMode: "numeric",
     value: f.qty,
     onFocus: selectAll,
     onChange: e => set({
@@ -428,7 +431,7 @@ function PurchaseFields({
     className: "mx-auto"
   })))), React.createElement("div", {
     className: `${lab} col-span-2 md:col-span-5`
-  }, "구매 단위", React.createElement(UnitChips, {
+  }, "무엇으로 샀나요? (봉·팩·묶음…)", React.createElement(UnitChips, {
     value: f.unit,
     onChange: u => set({
       unit: u
@@ -436,7 +439,7 @@ function PurchaseFields({
     idp: `${idp}-unit`
   })), React.createElement("label", {
     className: `${lab} col-span-2 sm:col-span-1 md:col-span-4`
-  }, "가격 (1", f.unit, "당, 원)", React.createElement("input", {
+  }, "1", f.unit, " 가격 (원)", React.createElement("input", {
     id: `${idp}-price`,
     type: "number",
     min: "0",
@@ -450,9 +453,9 @@ function PurchaseFields({
     className: `${field} mt-1 tabular-nums`
   })), React.createElement("div", {
     className: `${lab} col-span-2 sm:col-span-1 md:col-span-3`
-  }, "내용량 ", React.createElement("span", {
+  }, "1", f.unit, "에 든 양 ", React.createElement("span", {
     className: "font-normal text-slate-500"
-  }, "(선택 · 1", f.unit, " 안에 든 양)"), React.createElement("div", {
+  }, "(선택 · 600g, 10장 등)"), React.createElement("div", {
     className: "mt-1 flex h-12 overflow-hidden rounded-xl border border-slate-300 bg-white"
   }, React.createElement("input", {
     id: `${idp}-cq`,

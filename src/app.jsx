@@ -12,7 +12,8 @@ const sb = window.supabase && CFG.SUPABASE_URL
 
 const CATS = ['육류', '해산물', '농산물', '가공품', '소스·양념', '기타'];
 // 구매 단위 = "몇 개 샀나"의 단위. 내용량 단위 = "1개 안에 든 양"의 단위 (총액 계산에는 쓰지 않음)
-const UNITS = ['봉', '팩', '묶음', '단', '개', '박스', 'kg'];
+// 구매 단위는 '몇 개 샀나'만 — 무게(kg·g)는 넣지 않는다. 300g짜리 1봉 = 수량 1·봉, 내용량 300g
+const UNITS = ['봉', '팩', '묶음', '단', '개', '박스', '병'];
 const CONTENT_UNITS = ['g', 'kg', 'ml', 'L', '장', '개'];
 const BRANDS = ['삼대미역', '인생아구찜', '어화락', '공통'];
 
@@ -138,7 +139,8 @@ const formFrom = it => ({
 });
 const toPayload = f => {
   const qty = numOrNull(f.qty), price = numOrNull(f.unit_price), cq = numOrNull(f.content_qty);
-  if (!(qty > 0) || qty > 1000000) return { err: '구매 수량을 입력하세요 (0보다 큰 수).' };
+  if (!(qty > 0) || qty > 100000) return { err: `몇 ${f.unit} 샀는지 입력하세요.` };
+  if (!Number.isInteger(qty)) return { err: `구매 수량은 ${f.unit} 개수(1, 2, 3…)로 입력하세요. 300g 같은 무게는 '1${f.unit}에 든 양' 칸에 넣으세요.` };
   if (price === null || price < 0 || price > 100000000) return { err: `가격(1${f.unit}당)을 입력하세요.` };
   if (cq !== null && !(cq > 0)) return { err: '내용량은 0보다 크게 입력하거나 비워 두세요.' };
   if (!f.date) return { err: '구매한 날짜(입고일)를 달력에서 선택하세요.' };
@@ -173,7 +175,7 @@ const UnitChips = memo(function UnitChips({ value, onChange, idp }) {
 function PurchaseFields({ f, set, idp, places, showName, nameProps }) {
   const field = 'h-12 w-full rounded-xl border border-slate-300 bg-white px-3 text-base text-slate-900 focus:border-slate-900 focus:outline-none';
   const lab = 'text-xs font-semibold text-slate-700';
-  const step = f.unit === 'kg' ? 0.5 : 1;
+  const step = 1;
   const bump = d => { const q = numOrNull(f.qty) || 0; set({ qty: String(Math.max(step, +(q + d).toFixed(2))) }); };
   return (
     <div className="grid grid-cols-2 gap-3 md:grid-cols-12">
@@ -200,21 +202,21 @@ function PurchaseFields({ f, set, idp, places, showName, nameProps }) {
         )}
       </div>
 
-      <div className={`${lab} md:col-span-3`}>구매 수량
+      <div className={`${lab} md:col-span-3`}>몇 {f.unit} 샀나요?
         <div className="mt-1 flex h-12 overflow-hidden rounded-xl border border-slate-300 bg-white">
           <button type="button" aria-label="수량 감소" onClick={() => bump(-step)} className="w-11 shrink-0 text-slate-600 hover:bg-slate-100"><Minus size={18} className="mx-auto" /></button>
-          <input id={`${idp}-qty`} type="number" step="any" min="0" inputMode="decimal" value={f.qty} onFocus={selectAll} onChange={e => set({ qty: e.target.value })} className="min-w-0 flex-1 text-center text-base font-bold tabular-nums focus:outline-none" />
+          <input id={`${idp}-qty`} type="number" step="1" min="1" inputMode="numeric" value={f.qty} onFocus={selectAll} onChange={e => set({ qty: e.target.value })} className="min-w-0 flex-1 text-center text-base font-bold tabular-nums focus:outline-none" />
           <button type="button" aria-label="수량 증가" onClick={() => bump(step)} className="w-11 shrink-0 text-slate-600 hover:bg-slate-100"><Plus size={18} className="mx-auto" /></button>
         </div>
       </div>
-      <div className={`${lab} col-span-2 md:col-span-5`}>구매 단위
+      <div className={`${lab} col-span-2 md:col-span-5`}>무엇으로 샀나요? (봉·팩·묶음…)
         <UnitChips value={f.unit} onChange={u => set({ unit: u })} idp={`${idp}-unit`} />
       </div>
-      <label className={`${lab} col-span-2 sm:col-span-1 md:col-span-4`}>가격 (1{f.unit}당, 원)
+      <label className={`${lab} col-span-2 sm:col-span-1 md:col-span-4`}>1{f.unit} 가격 (원)
         <input id={`${idp}-price`} type="number" min="0" inputMode="numeric" value={f.unit_price} placeholder="예: 1580" onFocus={selectAll} onChange={e => set({ unit_price: e.target.value })} className={`${field} mt-1 tabular-nums`} />
       </label>
 
-      <div className={`${lab} col-span-2 sm:col-span-1 md:col-span-3`}>내용량 <span className="font-normal text-slate-500">(선택 · 1{f.unit} 안에 든 양)</span>
+      <div className={`${lab} col-span-2 sm:col-span-1 md:col-span-3`}>1{f.unit}에 든 양 <span className="font-normal text-slate-500">(선택 · 600g, 10장 등)</span>
         <div className="mt-1 flex h-12 overflow-hidden rounded-xl border border-slate-300 bg-white">
           <input id={`${idp}-cq`} type="number" step="any" min="0" inputMode="decimal" value={f.content_qty} placeholder="예: 600" onFocus={selectAll} onChange={e => set({ content_qty: e.target.value })} className="min-w-0 flex-1 px-3 text-base tabular-nums focus:outline-none" />
           <select id={`${idp}-cu`} aria-label="내용량 단위" value={f.content_unit} onChange={e => set({ content_unit: e.target.value })} className="shrink-0 border-l border-slate-300 bg-slate-50 px-2 text-sm font-semibold focus:outline-none">{CONTENT_UNITS.map(u => <option key={u}>{u}</option>)}</select>
