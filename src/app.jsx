@@ -136,31 +136,44 @@ const formFrom = it => ({
   unit_price: it.unit_price === null || it.unit_price === undefined ? '' : String(Number(it.unit_price)),
   content_qty: Number(it.content_qty) > 0 ? String(Number(it.content_qty)) : '', content_unit: it.content_unit || 'g',
   category: it.category || '기타', brand: it.brand || '', spec: it.spec || '', note: it.note || '',
+  // 무게로 산 건(unit=kg): 저울 무게 + 결제 금액으로 보여 준다
+  mode: it.unit === 'kg' ? 'weight' : 'count',
+  pay: it.unit === 'kg' && Number(it.qty) > 0 ? String(Math.round(Number(it.qty) * Number(it.unit_price))) : '',
 });
 const toPayload = f => {
+  if (!f.date) return { err: '구매한 날짜(입고일)를 달력에서 선택하세요.' };
+  if (f.date > todayStr()) return { err: '입고일은 오늘 이후로 선택할 수 없습니다.' };
+  const common = {
+    date: f.date, purchase_place: f.purchase_place.trim(), supplier: f.supplier.trim(),
+    category: f.category, brand: f.brand, spec: f.spec.trim(), note: f.note.trim(),
+  };
+  if (f.mode === 'weight') {
+    // 무게로 산 경우: 총액 = 결제 금액 그대로, kg당 가격은 역산해서 저장
+    const w = numOrNull(f.qty), pay = numOrNull(f.pay);
+    if (!(w > 0) || w > 100000) return { err: '저울에 단 무게(kg)를 입력하세요. 예: 1.5' };
+    if (pay === null || pay < 0 || pay > 100000000) return { err: '실제로 결제한 금액(원)을 입력하세요.' };
+    return { data: { ...common, qty: w, unit: 'kg', unit_price: Math.round((pay / w) * 100) / 100, content_qty: null, content_unit: '' } };
+  }
   const qty = numOrNull(f.qty), price = numOrNull(f.unit_price), cq = numOrNull(f.content_qty);
   if (!(qty > 0) || qty > 100000) return { err: `몇 ${f.unit} 샀는지 입력하세요.` };
   if (!Number.isInteger(qty)) return { err: `구매 수량은 ${f.unit} 개수(1, 2, 3…)로 입력하세요. 300g 같은 무게는 '1${f.unit}에 든 양' 칸에 넣으세요.` };
   if (price === null || price < 0 || price > 100000000) return { err: `가격(1${f.unit}당)을 입력하세요.` };
   if (cq !== null && !(cq > 0)) return { err: '내용량은 0보다 크게 입력하거나 비워 두세요.' };
-  if (!f.date) return { err: '구매한 날짜(입고일)를 달력에서 선택하세요.' };
-  if (f.date > todayStr()) return { err: '입고일은 오늘 이후로 선택할 수 없습니다.' };
-  return { data: {
-    date: f.date, qty, unit: f.unit, unit_price: price,
-    content_qty: cq, content_unit: cq ? f.content_unit : '',
-    purchase_place: f.purchase_place.trim(), supplier: f.supplier.trim(),
-    category: f.category, brand: f.brand, spec: f.spec.trim(), note: f.note.trim(),
-  } };
+  return { data: { ...common, qty, unit: f.unit, unit_price: price, content_qty: cq, content_unit: cq ? f.content_unit : '' } };
 };
 // 총액·환산단가 미리보기
 const previewOf = f => {
+  if (f.mode === 'weight') {
+    const w = numOrNull(f.qty), pay = numOrNull(f.pay);
+    return { total: pay !== null && pay >= 0 ? pay : null, uc: w > 0 && pay > 0 ? { v: pay / w, per: 'kg' } : null };
+  }
   const q = numOrNull(f.qty), p = numOrNull(f.unit_price);
   return { total: q > 0 && p !== null && p >= 0 ? q * p : null, uc: unitCost(p, numOrNull(f.content_qty), f.content_unit) };
 };
 const ucText = uc => (uc ? `${uc.per}당 ${Math.round(uc.v).toLocaleString('ko-KR')}원` : '');
 
 const UnitChips = memo(function UnitChips({ value, onChange, idp }) {
-  const list = UNITS.includes(value) ? UNITS : [...UNITS, value]; // 예전 단위(ea·g 등)도 보이게
+  const list = UNITS.includes(value) || value === 'kg' ? UNITS : [...UNITS, value]; // 예전 단위(ea·g 등)도 보이게
   return (
     <div className="mt-1 flex flex-wrap gap-1.5">
       {list.map(u => (
@@ -202,26 +215,52 @@ function PurchaseFields({ f, set, idp, places, showName, nameProps }) {
         )}
       </div>
 
-      <div className={`${lab} md:col-span-3`}>몇 {f.unit} 샀나요?
-        <div className="mt-1 flex h-12 overflow-hidden rounded-xl border border-slate-300 bg-white">
-          <button type="button" aria-label="수량 감소" onClick={() => bump(-step)} className="w-11 shrink-0 text-slate-600 hover:bg-slate-100"><Minus size={18} className="mx-auto" /></button>
-          <input id={`${idp}-qty`} type="number" step="1" min="1" inputMode="numeric" value={f.qty} onFocus={selectAll} onChange={e => set({ qty: e.target.value })} className="min-w-0 flex-1 text-center text-base font-bold tabular-nums focus:outline-none" />
-          <button type="button" aria-label="수량 증가" onClick={() => bump(step)} className="w-11 shrink-0 text-slate-600 hover:bg-slate-100"><Plus size={18} className="mx-auto" /></button>
+      <div className="col-span-2 md:col-span-12">
+        <div className="inline-flex rounded-xl bg-white p-1 ring-1 ring-slate-300">
+          {[['count', '개수로 샀어요 (봉·팩·묶음…)'], ['weight', '무게로 샀어요 (kg)']].map(([k, label]) => (
+            <button key={k} id={`${idp}-mode-${k}`} type="button" aria-pressed={f.mode === k}
+              onClick={() => set(k === 'weight' ? { mode: k, unit: 'kg', qty: '' } : { mode: k, unit: f.unit === 'kg' ? '봉' : f.unit, qty: '1' })}
+              className={`h-10 rounded-lg px-3 text-sm font-bold touch-manipulation ${f.mode === k ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>{label}</button>
+          ))}
         </div>
       </div>
-      <div className={`${lab} col-span-2 md:col-span-5`}>무엇으로 샀나요? (봉·팩·묶음…)
-        <UnitChips value={f.unit} onChange={u => set({ unit: u })} idp={`${idp}-unit`} />
-      </div>
-      <label className={`${lab} col-span-2 sm:col-span-1 md:col-span-4`}>1{f.unit} 가격 (원)
-        <input id={`${idp}-price`} type="number" min="0" inputMode="numeric" value={f.unit_price} placeholder="예: 1580" onFocus={selectAll} onChange={e => set({ unit_price: e.target.value })} className={`${field} mt-1 tabular-nums`} />
-      </label>
+      {f.mode === 'weight' ? (
+        <>
+          <label className={`${lab} md:col-span-3`}>몇 kg 샀나요? <span className="font-normal text-slate-500">(저울 무게)</span>
+            <div className="mt-1 flex h-12 overflow-hidden rounded-xl border border-slate-300 bg-white">
+              <input id={`${idp}-qty`} type="number" step="any" min="0" inputMode="decimal" value={f.qty} placeholder="예: 1.5" onFocus={selectAll} onChange={e => set({ qty: e.target.value })} className="min-w-0 flex-1 px-3 text-base font-bold tabular-nums focus:outline-none" />
+              <span className="grid w-12 shrink-0 place-items-center border-l border-slate-300 bg-slate-50 text-sm font-semibold">kg</span>
+            </div>
+          </label>
+          <label className={`${lab} md:col-span-4`}>결제 금액 (원) <span className="font-normal text-slate-500">(영수증 금액)</span>
+            <input id={`${idp}-pay`} type="number" min="0" inputMode="numeric" value={f.pay} placeholder="예: 27000" onFocus={selectAll} onChange={e => set({ pay: e.target.value })} className={`${field} mt-1 tabular-nums`} />
+          </label>
+          <p className="col-span-2 self-end pb-3 text-xs text-slate-500 md:col-span-5">정육·생선처럼 <b>저울에 달아서</b> 산 경우만 쓰세요. 300g 포장 1봉은 "개수로 샀어요"입니다.</p>
+        </>
+      ) : (
+        <>
+        <div className={`${lab} md:col-span-3`}>몇 {f.unit} 샀나요?
+          <div className="mt-1 flex h-12 overflow-hidden rounded-xl border border-slate-300 bg-white">
+            <button type="button" aria-label="수량 감소" onClick={() => bump(-step)} className="w-11 shrink-0 text-slate-600 hover:bg-slate-100"><Minus size={18} className="mx-auto" /></button>
+            <input id={`${idp}-qty`} type="number" step="1" min="1" inputMode="numeric" value={f.qty} onFocus={selectAll} onChange={e => set({ qty: e.target.value })} className="min-w-0 flex-1 text-center text-base font-bold tabular-nums focus:outline-none" />
+            <button type="button" aria-label="수량 증가" onClick={() => bump(step)} className="w-11 shrink-0 text-slate-600 hover:bg-slate-100"><Plus size={18} className="mx-auto" /></button>
+          </div>
+        </div>
+        <div className={`${lab} col-span-2 md:col-span-5`}>무엇으로 샀나요? (봉·팩·묶음…)
+          <UnitChips value={f.unit} onChange={u => set({ unit: u })} idp={`${idp}-unit`} />
+        </div>
+        <label className={`${lab} col-span-2 sm:col-span-1 md:col-span-4`}>1{f.unit} 가격 (원)
+          <input id={`${idp}-price`} type="number" min="0" inputMode="numeric" value={f.unit_price} placeholder="예: 1580" onFocus={selectAll} onChange={e => set({ unit_price: e.target.value })} className={`${field} mt-1 tabular-nums`} />
+        </label>
 
-      <div className={`${lab} col-span-2 sm:col-span-1 md:col-span-3`}>1{f.unit}에 든 양 <span className="font-normal text-slate-500">(선택 · 600g, 10장 등)</span>
-        <div className="mt-1 flex h-12 overflow-hidden rounded-xl border border-slate-300 bg-white">
-          <input id={`${idp}-cq`} type="number" step="any" min="0" inputMode="decimal" value={f.content_qty} placeholder="예: 600" onFocus={selectAll} onChange={e => set({ content_qty: e.target.value })} className="min-w-0 flex-1 px-3 text-base tabular-nums focus:outline-none" />
-          <select id={`${idp}-cu`} aria-label="내용량 단위" value={f.content_unit} onChange={e => set({ content_unit: e.target.value })} className="shrink-0 border-l border-slate-300 bg-slate-50 px-2 text-sm font-semibold focus:outline-none">{CONTENT_UNITS.map(u => <option key={u}>{u}</option>)}</select>
+        <div className={`${lab} col-span-2 sm:col-span-1 md:col-span-3`}>1{f.unit}에 든 양 <span className="font-normal text-slate-500">(선택 · 600g, 10장 등)</span>
+          <div className="mt-1 flex h-12 overflow-hidden rounded-xl border border-slate-300 bg-white">
+            <input id={`${idp}-cq`} type="number" step="any" min="0" inputMode="decimal" value={f.content_qty} placeholder="예: 600" onFocus={selectAll} onChange={e => set({ content_qty: e.target.value })} className="min-w-0 flex-1 px-3 text-base tabular-nums focus:outline-none" />
+            <select id={`${idp}-cu`} aria-label="내용량 단위" value={f.content_unit} onChange={e => set({ content_unit: e.target.value })} className="shrink-0 border-l border-slate-300 bg-slate-50 px-2 text-sm font-semibold focus:outline-none">{CONTENT_UNITS.map(u => <option key={u}>{u}</option>)}</select>
+          </div>
         </div>
-      </div>
+        </>
+      )}
       <label className={`${lab} col-span-2 sm:col-span-1 md:col-span-3`}>거래처 (제조·공급사)
         <input id={`${idp}-sup`} list="dl-suppliers" value={f.supplier} placeholder="예: 한성기업" onChange={e => set({ supplier: e.target.value })} className={`${field} mt-1`} />
       </label>
@@ -238,6 +277,13 @@ function PurchaseFields({ f, set, idp, places, showName, nameProps }) {
 const PriceLine = ({ f }) => {
   const { total, uc } = previewOf(f);
   const q = numOrNull(f.qty), p = numOrNull(f.unit_price);
+  if (f.mode === 'weight') return (
+    <p className="text-sm text-slate-600">
+      총액 <b className="tabular-nums text-slate-900">{total === null ? '—' : fmtKRW(total)}</b>
+      {q > 0 && <span className="tabular-nums"> · {fmtQty(q)}kg</span>}
+      {uc && <span className="ml-2 rounded-md bg-slate-100 px-2 py-0.5 text-xs font-semibold tabular-nums text-slate-700">{ucText(uc)}</span>}
+    </p>
+  );
   return (
     <p className="text-sm text-slate-600">
       총액 <b className="tabular-nums text-slate-900">{total === null ? '—' : fmtKRW(total)}</b>
@@ -379,7 +425,7 @@ const QuickAdd = memo(function QuickAdd({ items, places, onAdd, onMerge }) {
     return m;
   }, [items]);
 
-  const blank = () => ({ date: '', name: '', purchase_place: '', supplier: '', qty: '1', unit: '봉', unit_price: '', content_qty: '', content_unit: 'g', category: '기타', brand: '', spec: '', note: '' });
+  const blank = () => ({ mode: 'count', pay: '', date: '', name: '', purchase_place: '', supplier: '', qty: '1', unit: '봉', unit_price: '', content_qty: '', content_unit: 'g', category: '기타', brand: '', spec: '', note: '' });
   const [f, setF] = useState(blank);
   const [more, setMore] = useState(false);
   const [err, setErr] = useState('');
@@ -392,7 +438,8 @@ const QuickAdd = memo(function QuickAdd({ items, places, onAdd, onMerge }) {
     const prev = formFrom(p);
     set({ name, purchase_place: prev.purchase_place, supplier: prev.supplier, unit: prev.unit, unit_price: prev.unit_price, content_qty: prev.content_qty, content_unit: prev.content_unit, category: prev.category, brand: prev.brand, spec: prev.spec });
   };
-  const dup = f.name && items.find(it => it.name === f.name.trim() && it.date === f.date && (it.purchase_place || '') === f.purchase_place.trim() && !it._syncing);
+  const norm = v => (v || '').replace(/\s+/g, '').toLowerCase();
+  const dups = f.name.trim() && f.date ? items.filter(it => !it._syncing && it.date === f.date && norm(it.name) === norm(f.name) && norm(it.purchase_place) === norm(f.purchase_place)) : [];
 
   const submit = e => {
     e.preventDefault();
@@ -403,7 +450,7 @@ const QuickAdd = memo(function QuickAdd({ items, places, onAdd, onMerge }) {
     if (er) return setErr(er);
     setErr('');
     onAdd({ ...data, name });
-    set({ name: '', qty: '1', unit_price: '', content_qty: '', note: '' }); // 날짜·구매처는 연속 입력을 위해 유지
+    set({ name: '', qty: f.mode === 'weight' ? '' : '1', unit_price: '', pay: '', content_qty: '', note: '' }); // 날짜·구매처는 연속 입력을 위해 유지
   };
 
   const field = 'h-12 w-full rounded-xl border border-slate-300 bg-white px-3 text-base text-slate-900 focus:border-slate-900 focus:outline-none';
@@ -429,10 +476,20 @@ const QuickAdd = memo(function QuickAdd({ items, places, onAdd, onMerge }) {
           <label className={lab}>메모<input id="qa-note" value={f.note} placeholder="LOT, 샘플 여부 등" onChange={e => set({ note: e.target.value })} className={`${field} mt-1`} /></label>
         </div>
       )}
-      {dup && (
-        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          <AlertTriangle size={16} />같은 날 같은 구매처의 <b>{dup.name}</b>({fmtQty(dup.qty)}{dup.unit})이 이미 있습니다.
-          <button type="button" onClick={() => { onMerge(dup.id, numOrNull(f.qty) || 0); set({ name: '', qty: '1', unit_price: '', content_qty: '' }); }} className="ml-auto inline-flex h-10 items-center gap-1 rounded-lg bg-amber-600 px-3 text-sm font-bold text-white"><GitMerge size={14} />수량 합산</button>
+      {dups.length > 0 && (
+        <div className="space-y-1 rounded-xl border-2 border-amber-400 bg-amber-50 px-3 py-2.5 text-sm text-amber-950">
+          {dups.map(dp => (
+            <p key={dp.id} className="flex items-start gap-1.5">
+              <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-600" />
+              <span><b>{dp.requester || '누군가'}</b>님이 {fmtAt(dp.created_at)}에 같은 내용을 이미 등록했습니다 —
+                {' '}{dp.date.slice(5)} · {dp.purchase_place || '구매처 미입력'} · {dp.name} · {fmtQty(dp.qty)}{dp.unit} {fmtKRW(derive(dp).amount)}</span>
+            </p>
+          ))}
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <span className="text-xs text-amber-800">같은 구매라면 등록하지 마세요. 같은 날 따로 또 산 거라면 그대로 추가하면 됩니다.</span>
+            <button type="button" onClick={() => set({ name: '', qty: f.mode === 'weight' ? '' : '1', unit_price: '', pay: '', content_qty: '' })}
+              className="ml-auto h-9 rounded-lg border border-amber-500 bg-white px-3 text-sm font-bold text-amber-900">입력 지우기</button>
+          </div>
         </div>
       )}
       {err && <p className="flex items-center gap-1 text-sm font-semibold text-rose-700"><AlertTriangle size={14} />{err}</p>}

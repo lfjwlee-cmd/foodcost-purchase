@@ -260,9 +260,46 @@ const formFrom = it => ({
   category: it.category || '기타',
   brand: it.brand || '',
   spec: it.spec || '',
-  note: it.note || ''
+  note: it.note || '',
+  mode: it.unit === 'kg' ? 'weight' : 'count',
+  pay: it.unit === 'kg' && Number(it.qty) > 0 ? String(Math.round(Number(it.qty) * Number(it.unit_price))) : ''
 });
 const toPayload = f => {
+  if (!f.date) return {
+    err: '구매한 날짜(입고일)를 달력에서 선택하세요.'
+  };
+  if (f.date > todayStr()) return {
+    err: '입고일은 오늘 이후로 선택할 수 없습니다.'
+  };
+  const common = {
+    date: f.date,
+    purchase_place: f.purchase_place.trim(),
+    supplier: f.supplier.trim(),
+    category: f.category,
+    brand: f.brand,
+    spec: f.spec.trim(),
+    note: f.note.trim()
+  };
+  if (f.mode === 'weight') {
+    const w = numOrNull(f.qty),
+      pay = numOrNull(f.pay);
+    if (!(w > 0) || w > 100000) return {
+      err: '저울에 단 무게(kg)를 입력하세요. 예: 1.5'
+    };
+    if (pay === null || pay < 0 || pay > 100000000) return {
+      err: '실제로 결제한 금액(원)을 입력하세요.'
+    };
+    return {
+      data: {
+        ...common,
+        qty: w,
+        unit: 'kg',
+        unit_price: Math.round(pay / w * 100) / 100,
+        content_qty: null,
+        content_unit: ''
+      }
+    };
+  }
   const qty = numOrNull(f.qty),
     price = numOrNull(f.unit_price),
     cq = numOrNull(f.content_qty);
@@ -278,30 +315,29 @@ const toPayload = f => {
   if (cq !== null && !(cq > 0)) return {
     err: '내용량은 0보다 크게 입력하거나 비워 두세요.'
   };
-  if (!f.date) return {
-    err: '구매한 날짜(입고일)를 달력에서 선택하세요.'
-  };
-  if (f.date > todayStr()) return {
-    err: '입고일은 오늘 이후로 선택할 수 없습니다.'
-  };
   return {
     data: {
-      date: f.date,
+      ...common,
       qty,
       unit: f.unit,
       unit_price: price,
       content_qty: cq,
-      content_unit: cq ? f.content_unit : '',
-      purchase_place: f.purchase_place.trim(),
-      supplier: f.supplier.trim(),
-      category: f.category,
-      brand: f.brand,
-      spec: f.spec.trim(),
-      note: f.note.trim()
+      content_unit: cq ? f.content_unit : ''
     }
   };
 };
 const previewOf = f => {
+  if (f.mode === 'weight') {
+    const w = numOrNull(f.qty),
+      pay = numOrNull(f.pay);
+    return {
+      total: pay !== null && pay >= 0 ? pay : null,
+      uc: w > 0 && pay > 0 ? {
+        v: pay / w,
+        per: 'kg'
+      } : null
+    };
+  }
   const q = numOrNull(f.qty),
     p = numOrNull(f.unit_price);
   return {
@@ -315,7 +351,7 @@ const UnitChips = memo(function UnitChips({
   onChange,
   idp
 }) {
-  const list = UNITS.includes(value) ? UNITS : [...UNITS, value];
+  const list = UNITS.includes(value) || value === 'kg' ? UNITS : [...UNITS, value];
   return React.createElement("div", {
     className: "mt-1 flex flex-wrap gap-1.5"
   }, list.map(u => React.createElement("button", {
@@ -398,6 +434,64 @@ function PurchaseFields({
     }),
     className: `h-8 shrink-0 rounded-full border px-3 text-xs font-bold ${f.purchase_place === p ? 'border-sky-700 bg-sky-700 text-white' : 'border-sky-200 bg-white text-sky-800'}`
   }, p)))), React.createElement("div", {
+    className: "col-span-2 md:col-span-12"
+  }, React.createElement("div", {
+    className: "inline-flex rounded-xl bg-white p-1 ring-1 ring-slate-300"
+  }, [['count', '개수로 샀어요 (봉·팩·묶음…)'], ['weight', '무게로 샀어요 (kg)']].map(([k, label]) => React.createElement("button", {
+    key: k,
+    id: `${idp}-mode-${k}`,
+    type: "button",
+    "aria-pressed": f.mode === k,
+    onClick: () => set(k === 'weight' ? {
+      mode: k,
+      unit: 'kg',
+      qty: ''
+    } : {
+      mode: k,
+      unit: f.unit === 'kg' ? '봉' : f.unit,
+      qty: '1'
+    }),
+    className: `h-10 rounded-lg px-3 text-sm font-bold touch-manipulation ${f.mode === k ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'}`
+  }, label)))), f.mode === 'weight' ? React.createElement(React.Fragment, null, React.createElement("label", {
+    className: `${lab} md:col-span-3`
+  }, "몇 kg 샀나요? ", React.createElement("span", {
+    className: "font-normal text-slate-500"
+  }, "(저울 무게)"), React.createElement("div", {
+    className: "mt-1 flex h-12 overflow-hidden rounded-xl border border-slate-300 bg-white"
+  }, React.createElement("input", {
+    id: `${idp}-qty`,
+    type: "number",
+    step: "any",
+    min: "0",
+    inputMode: "decimal",
+    value: f.qty,
+    placeholder: "예: 1.5",
+    onFocus: selectAll,
+    onChange: e => set({
+      qty: e.target.value
+    }),
+    className: "min-w-0 flex-1 px-3 text-base font-bold tabular-nums focus:outline-none"
+  }), React.createElement("span", {
+    className: "grid w-12 shrink-0 place-items-center border-l border-slate-300 bg-slate-50 text-sm font-semibold"
+  }, "kg"))), React.createElement("label", {
+    className: `${lab} md:col-span-4`
+  }, "결제 금액 (원) ", React.createElement("span", {
+    className: "font-normal text-slate-500"
+  }, "(영수증 금액)"), React.createElement("input", {
+    id: `${idp}-pay`,
+    type: "number",
+    min: "0",
+    inputMode: "numeric",
+    value: f.pay,
+    placeholder: "예: 27000",
+    onFocus: selectAll,
+    onChange: e => set({
+      pay: e.target.value
+    }),
+    className: `${field} mt-1 tabular-nums`
+  })), React.createElement("p", {
+    className: "col-span-2 self-end pb-3 text-xs text-slate-500 md:col-span-5"
+  }, "정육·생선처럼 ", React.createElement("b", null, "저울에 달아서"), " 산 경우만 쓰세요. 300g 포장 1봉은 \"개수로 샀어요\"입니다.")) : React.createElement(React.Fragment, null, React.createElement("div", {
     className: `${lab} md:col-span-3`
   }, "몇 ", f.unit, " 샀나요?", React.createElement("div", {
     className: "mt-1 flex h-12 overflow-hidden rounded-xl border border-slate-300 bg-white"
@@ -480,7 +574,7 @@ function PurchaseFields({
     className: "shrink-0 border-l border-slate-300 bg-slate-50 px-2 text-sm font-semibold focus:outline-none"
   }, CONTENT_UNITS.map(u => React.createElement("option", {
     key: u
-  }, u))))), React.createElement("label", {
+  }, u)))))), React.createElement("label", {
     className: `${lab} col-span-2 sm:col-span-1 md:col-span-3`
   }, "거래처 (제조·공급사)", React.createElement("input", {
     id: `${idp}-sup`,
@@ -526,6 +620,15 @@ const PriceLine = ({
   } = previewOf(f);
   const q = numOrNull(f.qty),
     p = numOrNull(f.unit_price);
+  if (f.mode === 'weight') return React.createElement("p", {
+    className: "text-sm text-slate-600"
+  }, "총액 ", React.createElement("b", {
+    className: "tabular-nums text-slate-900"
+  }, total === null ? '—' : fmtKRW(total)), q > 0 && React.createElement("span", {
+    className: "tabular-nums"
+  }, " · ", fmtQty(q), "kg"), uc && React.createElement("span", {
+    className: "ml-2 rounded-md bg-slate-100 px-2 py-0.5 text-xs font-semibold tabular-nums text-slate-700"
+  }, ucText(uc)));
   return React.createElement("p", {
     className: "text-sm text-slate-600"
   }, "총액 ", React.createElement("b", {
@@ -784,6 +887,8 @@ const QuickAdd = memo(function QuickAdd({
     return m;
   }, [items]);
   const blank = () => ({
+    mode: 'count',
+    pay: '',
     date: '',
     name: '',
     purchase_place: '',
@@ -824,7 +929,8 @@ const QuickAdd = memo(function QuickAdd({
       spec: prev.spec
     });
   };
-  const dup = f.name && items.find(it => it.name === f.name.trim() && it.date === f.date && (it.purchase_place || '') === f.purchase_place.trim() && !it._syncing);
+  const norm = v => (v || '').replace(/\s+/g, '').toLowerCase();
+  const dups = f.name.trim() && f.date ? items.filter(it => !it._syncing && it.date === f.date && norm(it.name) === norm(f.name) && norm(it.purchase_place) === norm(f.purchase_place)) : [];
   const submit = e => {
     e.preventDefault();
     const name = f.name.trim();
@@ -842,8 +948,9 @@ const QuickAdd = memo(function QuickAdd({
     });
     set({
       name: '',
-      qty: '1',
+      qty: f.mode === 'weight' ? '' : '1',
       unit_price: '',
+      pay: '',
       content_qty: '',
       note: ''
     });
@@ -908,25 +1015,29 @@ const QuickAdd = memo(function QuickAdd({
       note: e.target.value
     }),
     className: `${field} mt-1`
-  }))), dup && React.createElement("div", {
-    className: "flex flex-wrap items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+  }))), dups.length > 0 && React.createElement("div", {
+    className: "space-y-1 rounded-xl border-2 border-amber-400 bg-amber-50 px-3 py-2.5 text-sm text-amber-950"
+  }, dups.map(dp => React.createElement("p", {
+    key: dp.id,
+    className: "flex items-start gap-1.5"
   }, React.createElement(AlertTriangle, {
-    size: 16
-  }), "같은 날 같은 구매처의 ", React.createElement("b", null, dup.name), "(", fmtQty(dup.qty), dup.unit, ")이 이미 있습니다.", React.createElement("button", {
+    size: 16,
+    className: "mt-0.5 shrink-0 text-amber-600"
+  }), React.createElement("span", null, React.createElement("b", null, dp.requester || '누군가'), "님이 ", fmtAt(dp.created_at), "에 같은 내용을 이미 등록했습니다 —", ' ', dp.date.slice(5), " · ", dp.purchase_place || '구매처 미입력', " · ", dp.name, " · ", fmtQty(dp.qty), dp.unit, " ", fmtKRW(derive(dp).amount)))), React.createElement("div", {
+    className: "flex flex-wrap items-center gap-2 pt-1"
+  }, React.createElement("span", {
+    className: "text-xs text-amber-800"
+  }, "같은 구매라면 등록하지 마세요. 같은 날 따로 또 산 거라면 그대로 추가하면 됩니다."), React.createElement("button", {
     type: "button",
-    onClick: () => {
-      onMerge(dup.id, numOrNull(f.qty) || 0);
-      set({
-        name: '',
-        qty: '1',
-        unit_price: '',
-        content_qty: ''
-      });
-    },
-    className: "ml-auto inline-flex h-10 items-center gap-1 rounded-lg bg-amber-600 px-3 text-sm font-bold text-white"
-  }, React.createElement(GitMerge, {
-    size: 14
-  }), "수량 합산")), err && React.createElement("p", {
+    onClick: () => set({
+      name: '',
+      qty: f.mode === 'weight' ? '' : '1',
+      unit_price: '',
+      pay: '',
+      content_qty: ''
+    }),
+    className: "ml-auto h-9 rounded-lg border border-amber-500 bg-white px-3 text-sm font-bold text-amber-900"
+  }, "입력 지우기"))), err && React.createElement("p", {
     className: "flex items-center gap-1 text-sm font-semibold text-rose-700"
   }, React.createElement(AlertTriangle, {
     size: 14
