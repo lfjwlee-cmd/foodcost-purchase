@@ -44,7 +44,7 @@ node serve.js        # http://localhost:4600 에서 확인
    - 위치: Project Settings → API (또는 상단 Connect)
    - `SUPABASE_URL` = Project URL
    - `SUPABASE_ANON_KEY` = **Publishable(anon) 키**
-   - ⚠ `service_role`/secret 키는 절대 넣지 마세요. 이 파일은 웹에 그대로 공개됩니다.
+   - ⚠ secret(서비스용 비밀) 키는 절대 넣지 마세요. 이 파일은 웹에 그대로 공개됩니다.
 4. **로컬 확인** — `npm install` → `node build.js` → `node serve.js` → http://localhost:4600
 5. **GitHub에 올리기** — GitHub에서 새 저장소(Public) 생성 후
    ```bash
