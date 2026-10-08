@@ -833,7 +833,8 @@ function App() {
 
   /* 불러오기 */
   const load = useCallback(async () => {
-    if (!sb) { setStatus('error'); setLoadErr('config.js의 Supabase 설정을 읽지 못했습니다.'); return; }
+    if (!sb) { setStatus('error'); setLoadErr('config.js의 Supabase 설정을 읽지 못했습니다. config.example.js를 config.js로 복사해 값을 넣으세요.'); return; }
+    if (/YOUR-PROJECT-REF/.test(CFG.SUPABASE_URL)) { setStatus('error'); setLoadErr('config.js에 Supabase 주소와 공개 키를 아직 넣지 않았습니다. README의 설치 방법을 보세요.'); return; }
     setStatus('loading');
     const { data, error } = await sb.from(TABLE).select('*').eq('archived', false).order('date', { ascending: false }).order('no', { ascending: false }).limit(5000);
     if (error) { setStatus('error'); setLoadErr(error.code === '42P01' || /does not exist|schema cache/.test(error.message) ? 'pur_items 테이블이 없습니다. supabase-setup.sql을 먼저 실행하세요.' : errMsg(error)); return; }

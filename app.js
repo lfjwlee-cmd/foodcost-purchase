@@ -1710,7 +1710,12 @@ function App() {
   const load = useCallback(async () => {
     if (!sb) {
       setStatus('error');
-      setLoadErr('config.js의 Supabase 설정을 읽지 못했습니다.');
+      setLoadErr('config.js의 Supabase 설정을 읽지 못했습니다. config.example.js를 config.js로 복사해 값을 넣으세요.');
+      return;
+    }
+    if (/YOUR-PROJECT-REF/.test(CFG.SUPABASE_URL)) {
+      setStatus('error');
+      setLoadErr('config.js에 Supabase 주소와 공개 키를 아직 넣지 않았습니다. README의 설치 방법을 보세요.');
       return;
     }
     setStatus('loading');
