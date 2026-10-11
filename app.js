@@ -59,7 +59,24 @@ const sb = window.supabase && CFG.SUPABASE_URL ? window.supabase.createClient(CF
 const CATS = ['육류', '해산물', '농산물', '가공품', '소스·양념', '기타'];
 const UNITS = ['봉', '팩', '묶음', '단', '개', '박스', '병'];
 const CONTENT_UNITS = ['g', 'kg', 'ml', 'L', '장', '개'];
-const BRANDS = ['삼대미역', '인생아구찜', '어화락', '공통'];
+const BRAND_LIST = ['삼대미역', '인생아구찜', '어화락'];
+const COMMON = '공통';
+const NO_BRAND = '브랜드 미지정';
+const brandsOf = it => {
+  const v = (typeof it === 'string' ? it : it.brand) || '';
+  if (v.trim() === COMMON) return [...BRAND_LIST];
+  return v.split(',').map(x => x.trim()).filter(Boolean);
+};
+const encodeBrands = arr => {
+  const known = BRAND_LIST.filter(b => arr.includes(b));
+  const extra = arr.filter(b => !BRAND_LIST.includes(b) && b !== COMMON);
+  if (known.length === BRAND_LIST.length && !extra.length) return COMMON;
+  return [...known, ...extra].join(',');
+};
+const brandLabel = it => {
+  const v = brandsOf(it);
+  return !v.length ? '' : encodeBrands(v) === COMMON ? COMMON : v.join(' · ');
+};
 const VERDICT = {
   usable: {
     label: '사용 가능',
@@ -596,20 +613,20 @@ function PurchaseFields({
     className: `${field} mt-1`
   }, CATS.map(c => React.createElement("option", {
     key: c
-  }, c)))), React.createElement("label", {
-    className: `${lab} md:col-span-3`
-  }, "브랜드", React.createElement("select", {
-    id: `${idp}-brand`,
+  }, c)))), React.createElement("div", {
+    className: `${lab} col-span-2 md:col-span-3`
+  }, "어느 브랜드에서 쓰나요? ", React.createElement("span", {
+    className: "font-normal text-slate-500"
+  }, "(여러 개 선택)"), React.createElement("div", {
+    className: "mt-1"
+  }, React.createElement(BrandPicker, {
     value: f.brand,
-    onChange: e => set({
-      brand: e.target.value
+    onChange: v => set({
+      brand: v
     }),
-    className: `${field} mt-1`
-  }, React.createElement("option", {
-    value: ""
-  }, "선택 안 함"), BRANDS.map(b => React.createElement("option", {
-    key: b
-  }, b)))));
+    size: "sm",
+    idp: `${idp}-brand`
+  }))));
 }
 const PriceLine = ({
   f
@@ -639,6 +656,39 @@ const PriceLine = ({
     className: "ml-2 rounded-md bg-slate-100 px-2 py-0.5 text-xs font-semibold tabular-nums text-slate-700"
   }, ucText(uc)));
 };
+const BrandPicker = memo(function BrandPicker({
+  value,
+  onChange,
+  disabled,
+  size = 'md',
+  idp
+}) {
+  const cur = brandsOf(value);
+  const all = encodeBrands(cur) === COMMON;
+  const toggle = b => onChange(encodeBrands(cur.includes(b) ? cur.filter(x => x !== b) : [...cur, b]));
+  const h = size === 'sm' ? 'h-9 px-2.5 text-xs' : 'h-10 px-3 text-sm';
+  const chip = on => `${h} rounded-lg border font-bold touch-manipulation disabled:opacity-50 ${on ? 'border-orange-600 bg-orange-600 text-white' : 'border-orange-200 bg-white text-orange-900 hover:bg-orange-50'}`;
+  return React.createElement("div", {
+    className: "flex flex-wrap gap-1.5",
+    role: "group",
+    "aria-label": "사용 브랜드"
+  }, BRAND_LIST.map(b => React.createElement("button", {
+    key: b,
+    id: idp ? `${idp}-${b}` : undefined,
+    type: "button",
+    disabled: disabled,
+    "aria-pressed": cur.includes(b),
+    onClick: () => toggle(b),
+    className: chip(cur.includes(b))
+  }, b)), React.createElement("button", {
+    id: idp ? `${idp}-common` : undefined,
+    type: "button",
+    disabled: disabled,
+    "aria-pressed": all,
+    onClick: () => onChange(all ? '' : COMMON),
+    className: chip(all)
+  }, COMMON));
+});
 function DetailPanel({
   item,
   focusComment,
@@ -783,6 +833,7 @@ const PartRow = memo(function PartRow({
   item,
   expanded,
   places,
+  onBrand,
   onVerdict,
   onEval,
   onToggleExpand,
@@ -805,9 +856,9 @@ const PartRow = memo(function PartRow({
     className: "rounded-md bg-slate-900 px-2 py-0.5 text-xs font-bold tabular-nums text-white"
   }, "#", item.no), React.createElement("span", {
     className: "rounded-md border border-slate-300 px-2 py-0.5 text-xs font-semibold text-slate-600"
-  }, item.category), item.brand && React.createElement("span", {
+  }, item.category), brandLabel(item) && React.createElement("span", {
     className: "rounded-md bg-orange-100 px-2 py-0.5 text-xs font-semibold text-orange-800"
-  }, item.brand), item.purchase_place && React.createElement("span", {
+  }, brandLabel(item)), item.purchase_place && React.createElement("span", {
     className: "rounded-md bg-sky-100 px-2 py-0.5 text-xs font-semibold text-sky-800"
   }, item.purchase_place), !item.ev_v && React.createElement("span", {
     className: `rounded-md px-2 py-0.5 text-xs font-semibold ${NONE.badge}`
@@ -835,7 +886,16 @@ const PartRow = memo(function PartRow({
   }, React.createElement(VerdictPicker, {
     item: item,
     onVerdict: onVerdict
-  }), React.createElement("button", {
+  }), React.createElement("div", {
+    className: "flex flex-wrap items-center gap-2"
+  }, React.createElement("span", {
+    className: `text-xs font-semibold ${brandsOf(item).length ? 'text-slate-500' : 'text-rose-600'}`
+  }, brandsOf(item).length ? '사용 브랜드' : '브랜드 선택 필요'), React.createElement(BrandPicker, {
+    value: item.brand,
+    onChange: v => onBrand(item.id, v),
+    disabled: item._syncing,
+    size: "sm"
+  })), React.createElement("button", {
     type: "button",
     onClick: () => onToggleExpand(item.id, true),
     className: "flex w-full items-center gap-2 rounded-lg px-1 text-left text-sm hover:bg-slate-50"
@@ -1044,32 +1104,40 @@ const QuickAdd = memo(function QuickAdd({
   }), err));
 });
 const NO_PLACE = '구매처 미입력';
-const groupItems = items => {
-  const places = new Map();
+const groupItems = (items, by = 'place') => {
+  const groups = new Map();
+  const keysOf = it => by === 'brand' ? brandsOf(it).length ? brandsOf(it) : [NO_BRAND] : [it.purchase_place || NO_PLACE];
   items.forEach(it => {
-    const pk = it.purchase_place || NO_PLACE;
-    if (!places.has(pk)) places.set(pk, {
-      name: pk,
-      total: 0,
-      items: [],
-      cats: new Map()
-    });
-    const g = places.get(pk);
     const amt = derive(it).amount;
-    g.total += amt;
-    g.items.push(it);
-    if (!g.cats.has(it.category)) g.cats.set(it.category, {
-      name: it.category,
-      total: 0,
-      items: []
+    const shared = by === 'brand' && brandsOf(it).length > 1;
+    keysOf(it).forEach(k => {
+      if (!groups.has(k)) groups.set(k, {
+        name: k,
+        total: 0,
+        items: [],
+        shared: 0,
+        cats: new Map()
+      });
+      const g = groups.get(k);
+      g.total += amt;
+      g.items.push(it);
+      if (shared) g.shared += 1;
+      if (!g.cats.has(it.category)) g.cats.set(it.category, {
+        name: it.category,
+        total: 0,
+        items: []
+      });
+      const c = g.cats.get(it.category);
+      c.total += amt;
+      c.items.push(it);
     });
-    const c = g.cats.get(it.category);
-    c.total += amt;
-    c.items.push(it);
   });
-  const byTotal = (a, b) => (a.name === NO_PLACE) - (b.name === NO_PLACE) || b.total - a.total;
-  return [...places.values()].sort(byTotal).map(g => ({
+  const empty = by === 'brand' ? NO_BRAND : NO_PLACE;
+  const order = g => by === 'brand' && BRAND_LIST.includes(g.name) ? BRAND_LIST.indexOf(g.name) : 99;
+  const sorter = (a, b) => (a.name === empty) - (b.name === empty) || order(a) - order(b) || b.total - a.total;
+  return [...groups.values()].sort(sorter).map(g => ({
     ...g,
+    empty: g.name === empty,
     cats: [...g.cats.values()].sort((a, b) => b.total - a.total)
   }));
 };
@@ -1084,9 +1152,10 @@ function GroupedList({
   items,
   renderRow,
   forceOpen,
-  openAll
+  openAll,
+  by = 'place'
 }) {
-  const groups = useMemo(() => groupItems(items), [items]);
+  const groups = useMemo(() => groupItems(items, by), [items, by]);
   const [open, setOpen] = useState(readOpen);
   useEffect(() => {
     lsSet('pur_open', JSON.stringify(open));
@@ -1095,9 +1164,9 @@ function GroupedList({
     if (openAll === null || openAll === undefined) return;
     const next = {};
     groups.forEach(g => {
-      next['p:' + g.name] = openAll.v;
+      next['p:' + by + ':' + g.name] = openAll.v;
       g.cats.forEach(c => {
-        next['c:' + g.name + '|' + c.name] = openAll.v;
+        next['c:' + by + ':' + g.name + '|' + c.name] = openAll.v;
       });
     });
     setOpen(o => ({
@@ -1114,7 +1183,7 @@ function GroupedList({
   return React.createElement("div", {
     className: "space-y-3"
   }, groups.map(g => {
-    const pk = 'p:' + g.name;
+    const pk = 'p:' + by + ':' + g.name;
     const po = isOpen(pk);
     return React.createElement("section", {
       key: g.name,
@@ -1128,15 +1197,15 @@ function GroupedList({
       size: 20,
       className: `shrink-0 text-slate-400 transition ${po ? 'rotate-90' : ''}`
     }), React.createElement("span", {
-      className: `rounded-lg px-2.5 py-1 text-sm font-bold ${g.name === NO_PLACE ? 'bg-slate-100 text-slate-500' : 'bg-sky-100 text-sky-900'}`
+      className: `rounded-lg px-2.5 py-1 text-sm font-bold ${g.empty ? 'bg-rose-50 text-rose-700' : by === 'brand' ? 'bg-orange-100 text-orange-900' : 'bg-sky-100 text-sky-900'}`
     }, g.name), React.createElement("span", {
       className: "text-sm text-slate-500"
-    }, g.items.length, "건 · ", g.cats.map(c => c.name).join(' · ')), React.createElement("b", {
+    }, g.items.length, "건 · ", g.cats.map(c => c.name).join(' · '), g.shared ? ` · 공통 ${g.shared}건 포함` : ''), React.createElement("b", {
       className: "ml-auto text-lg font-extrabold tabular-nums text-slate-900"
     }, fmtWon(g.total))), po && React.createElement("div", {
       className: "space-y-2 border-t border-slate-100 bg-slate-50 p-3"
     }, g.cats.map(c => {
-      const ck = 'c:' + g.name + '|' + c.name;
+      const ck = 'c:' + by + ':' + g.name + '|' + c.name;
       const co = isOpen(ck);
       return React.createElement("div", {
         key: c.name
@@ -1241,7 +1310,7 @@ function CalendarView({
     const key = `${monthKey}-${pad(d)}`;
     const list = byDay[key] || [];
     const total = list.reduce((s, it) => s + derive(it).amount, 0);
-    const byPlace = groupItems(list);
+    const byPlace = groupItems(list, 'place');
     const isSel = selDay === key;
     const dow = i % 7;
     return React.createElement("button", {
@@ -1311,6 +1380,7 @@ function StatsView({
     const cat = {};
     const sup = {};
     const place = {};
+    const brand = {};
     const reason = {};
     const vd = {
       usable: {
@@ -1341,6 +1411,9 @@ function StatsView({
       sup[sk] = (sup[sk] || 0) + amount;
       const pk = it.purchase_place || '구매처 미입력';
       place[pk] = (place[pk] || 0) + amount;
+      (brandsOf(it).length ? brandsOf(it) : [NO_BRAND]).forEach(b => {
+        brand[b] = (brand[b] || 0) + amount;
+      });
       const k = it.ev_v || 'none';
       vd[k].n += 1;
       vd[k].amt += amount;
@@ -1381,6 +1454,7 @@ function StatsView({
       cat: toBars(cat),
       sup: toBars(sup).slice(0, 8),
       place: toBars(place).slice(0, 8),
+      brand: toBars(brand),
       reason: Object.entries(reason).map(([name, 건수]) => ({
         name,
         건수
@@ -1561,6 +1635,11 @@ function StatsView({
   }, s.reason.length === 0 ? React.createElement(Empty, null, "보류·불가 사유 태그가 아직 없습니다.") : React.createElement("div", {
     className: "h-52"
   }, hBar(s.reason, '건수', '#e11d48', 80, 'n'))), React.createElement(Card, {
+    title: "브랜드별 지출",
+    sub: "어느 브랜드에서 쓰나 · 공통 품목은 각 브랜드에 모두 포함(합계가 총 지출보다 클 수 있음)"
+  }, React.createElement("div", {
+    className: "h-60"
+  }, hBar(s.brand, '지출', '#c2410c', 96))), React.createElement(Card, {
     title: "구매처별 지출",
     sub: "어디서 샀나 · 상위 8곳"
   }, React.createElement("div", {
@@ -1671,6 +1750,10 @@ function App() {
   const [inflight, setInflight] = useState(0);
   const [rt, setRt] = useState('connecting');
   const [openAll, setOpenAll] = useState(null);
+  const [groupBy, setGroupBy] = useState(() => lsGet('pur_groupby') || 'brand');
+  useEffect(() => {
+    lsSet('pur_groupby', groupBy);
+  }, [groupBy]);
   const now = new Date();
   const [month, setMonth] = useState({
     y: now.getFullYear(),
@@ -1916,6 +1999,29 @@ function App() {
   }, [pushToast]);
   const addRef = useRef(addItem);
   addRef.current = addItem;
+  const setBrand = useCallback(async (id, brand) => {
+    const snap = itemsRef.current.find(x => x.id === id);
+    if (!snap) return;
+    patchRow(id, {
+      brand,
+      _syncing: true
+    });
+    const {
+      data,
+      error
+    } = await track(sb.from(TABLE).update({
+      brand
+    }).eq('id', id).select().single());
+    if (error) {
+      replaceRow(snap);
+      pushToast({
+        tone: 'error',
+        text: `${snap.name} 브랜드 저장 실패: ${errMsg(error)}`
+      });
+      return;
+    }
+    replaceRow(data);
+  }, [patchRow, replaceRow, pushToast]);
   const updateItem = useCallback(async (id, patch) => {
     const snap = itemsRef.current.find(x => x.id === id);
     if (!snap) return;
@@ -2016,7 +2122,10 @@ function App() {
         if (!tokens.every(tk => h.includes(tk))) return false;
       }
       if (fCat.length && !fCat.includes(it.category)) return false;
-      if (fBrand.length && !fBrand.includes(it.brand || '')) return false;
+      if (fBrand.length) {
+        const bs = brandsOf(it);
+        if (!fBrand.some(b => b === NO_BRAND ? !bs.length : bs.includes(b))) return false;
+      }
       if (fPlace.length && !fPlace.includes(it.purchase_place || '')) return false;
       return true;
     });
@@ -2066,7 +2175,8 @@ function App() {
   const suppliers = useMemo(() => [...new Set(items.map(i => i.supplier).filter(Boolean))].slice(0, 300), [items]);
   const places = useMemo(() => [...new Set([...items].sort(byDateDesc).map(i => i.purchase_place).filter(Boolean))].slice(0, 8), [items]);
   const allPlaces = useMemo(() => [...new Set(items.map(i => i.purchase_place).filter(Boolean))].slice(0, 300), [items]);
-  const brandChips = useMemo(() => [...new Set([...BRANDS, ...items.map(i => i.brand).filter(Boolean)])], [items]);
+  const brandChips = [...BRAND_LIST, NO_BRAND];
+  const noBrandCount = useMemo(() => items.filter(i => !brandsOf(i).length).length, [items]);
   const filterActive = q || fVerdict.length || fCat.length || fBrand.length || fPlace.length;
   const clearFilters = () => {
     setQuery('');
@@ -2080,12 +2190,13 @@ function App() {
     item: it,
     places: places,
     expanded: expanded?.id === it.id ? expanded.mode : false,
+    onBrand: setBrand,
     onVerdict: setVerdict,
     onEval: commitEval,
     onToggleExpand: toggleExpand,
     onUpdate: updateItem,
     onRemove: removeItem
-  }), [expanded, places, setVerdict, commitEval, toggleExpand, updateItem, removeItem]);
+  }), [expanded, places, setBrand, setVerdict, commitEval, toggleExpand, updateItem, removeItem]);
   const saveAuthor = e => {
     e.preventDefault();
     const n = authorDraft.trim().slice(0, 20);
@@ -2288,8 +2399,11 @@ function App() {
   }), brandChips.map(b => React.createElement(Chip, {
     key: b,
     active: fBrand.includes(b),
-    onClick: () => tBrand(b)
-  }, b)), places.length > 0 && React.createElement("span", {
+    onClick: () => tBrand(b),
+    dot: b === NO_BRAND ? 'bg-rose-500' : 'bg-orange-500'
+  }, b, b === NO_BRAND ? React.createElement("span", {
+    className: "tabular-nums opacity-70"
+  }, " ", noBrandCount) : null)), places.length > 0 && React.createElement("span", {
     className: "mx-1 w-px shrink-0 bg-slate-200"
   }), places.map(p => React.createElement(Chip, {
     key: p,
@@ -2373,11 +2487,19 @@ function App() {
     onAdd: addItem,
     onMerge: mergeQty
   }), React.createElement("div", {
-    className: "flex items-center justify-between px-1 text-sm text-slate-500"
+    className: "flex flex-wrap items-center gap-2 px-1 text-sm text-slate-500"
   }, React.createElement("span", null, React.createElement("b", {
     className: "text-slate-900"
-  }, filtered.length), "건 ", filterActive || period !== 'all' ? `(전체 ${items.length}건)` : ''), filtered.length > 0 && !q && React.createElement("span", {
-    className: "flex gap-1"
+  }, filtered.length), "건 ", filterActive || period !== 'all' ? `(전체 ${items.length}건)` : ''), React.createElement("span", {
+    className: "inline-flex rounded-lg bg-slate-200 p-0.5"
+  }, [['brand', '브랜드별'], ['place', '구매처별']].map(([k, l]) => React.createElement("button", {
+    key: k,
+    type: "button",
+    onClick: () => setGroupBy(k),
+    "aria-pressed": groupBy === k,
+    className: `h-8 rounded-md px-3 text-sm font-bold ${groupBy === k ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'}`
+  }, l))), filtered.length > 0 && !q && React.createElement("span", {
+    className: "ml-auto flex gap-1"
   }, React.createElement("button", {
     type: "button",
     onClick: () => setOpenAll({
@@ -2396,7 +2518,8 @@ function App() {
     items: filtered,
     renderRow: renderRow,
     forceOpen: !!q,
-    openAll: openAll
+    openAll: openAll,
+    by: groupBy
   }) : React.createElement("div", {
     className: "rounded-2xl border border-slate-200 bg-white p-10 text-center"
   }, items.length === 0 ? React.createElement(React.Fragment, null, React.createElement("p", {

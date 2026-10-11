@@ -15,7 +15,23 @@ const CATS = ['육류', '해산물', '농산물', '가공품', '소스·양념',
 // 구매 단위는 '몇 개 샀나'만 — 무게(kg·g)는 넣지 않는다. 300g짜리 1봉 = 수량 1·봉, 내용량 300g
 const UNITS = ['봉', '팩', '묶음', '단', '개', '박스', '병'];
 const CONTENT_UNITS = ['g', 'kg', 'ml', 'L', '장', '개'];
-const BRANDS = ['삼대미역', '인생아구찜', '어화락', '공통'];
+const BRAND_LIST = ['삼대미역', '인생아구찜', '어화락'];
+const COMMON = '공통'; // 세 브랜드 모두
+const NO_BRAND = '브랜드 미지정';
+// brand 칸 → 브랜드 배열. '공통'이면 세 곳 모두
+const brandsOf = it => {
+  const v = (typeof it === 'string' ? it : it.brand) || '';
+  if (v.trim() === COMMON) return [...BRAND_LIST];
+  return v.split(',').map(x => x.trim()).filter(Boolean);
+};
+// 브랜드 배열 → brand 칸 값. 세 곳 모두면 '공통'
+const encodeBrands = arr => {
+  const known = BRAND_LIST.filter(b => arr.includes(b));
+  const extra = arr.filter(b => !BRAND_LIST.includes(b) && b !== COMMON);
+  if (known.length === BRAND_LIST.length && !extra.length) return COMMON;
+  return [...known, ...extra].join(',');
+};
+const brandLabel = it => { const v = brandsOf(it); return !v.length ? '' : encodeBrands(v) === COMMON ? COMMON : v.join(' · '); };
 
 const VERDICT = {
   usable: { label: '사용 가능', icon: CheckCircle2, on: 'bg-emerald-600 text-white border-emerald-600', off: 'border-emerald-200 text-emerald-800 hover:bg-emerald-50', dot: 'bg-emerald-500', hex: '#059669' },
@@ -267,9 +283,9 @@ function PurchaseFields({ f, set, idp, places, showName, nameProps }) {
       <label className={`${lab} md:col-span-3`}>분류
         <select id={`${idp}-cat`} value={f.category} onChange={e => set({ category: e.target.value })} className={`${field} mt-1`}>{CATS.map(c => <option key={c}>{c}</option>)}</select>
       </label>
-      <label className={`${lab} md:col-span-3`}>브랜드
-        <select id={`${idp}-brand`} value={f.brand} onChange={e => set({ brand: e.target.value })} className={`${field} mt-1`}><option value="">선택 안 함</option>{BRANDS.map(b => <option key={b}>{b}</option>)}</select>
-      </label>
+      <div className={`${lab} col-span-2 md:col-span-3`}>어느 브랜드에서 쓰나요? <span className="font-normal text-slate-500">(여러 개 선택)</span>
+        <div className="mt-1"><BrandPicker value={f.brand} onChange={v => set({ brand: v })} size="sm" idp={`${idp}-brand`} /></div>
+      </div>
     </div>
   );
 }
@@ -292,6 +308,22 @@ const PriceLine = ({ f }) => {
     </p>
   );
 };
+
+const BrandPicker = memo(function BrandPicker({ value, onChange, disabled, size = 'md', idp }) {
+  const cur = brandsOf(value);
+  const all = encodeBrands(cur) === COMMON;
+  const toggle = b => onChange(encodeBrands(cur.includes(b) ? cur.filter(x => x !== b) : [...cur, b]));
+  const h = size === 'sm' ? 'h-9 px-2.5 text-xs' : 'h-10 px-3 text-sm';
+  const chip = on => `${h} rounded-lg border font-bold touch-manipulation disabled:opacity-50 ${on ? 'border-orange-600 bg-orange-600 text-white' : 'border-orange-200 bg-white text-orange-900 hover:bg-orange-50'}`;
+  return (
+    <div className="flex flex-wrap gap-1.5" role="group" aria-label="사용 브랜드">
+      {BRAND_LIST.map(b => (
+        <button key={b} id={idp ? `${idp}-${b}` : undefined} type="button" disabled={disabled} aria-pressed={cur.includes(b)} onClick={() => toggle(b)} className={chip(cur.includes(b))}>{b}</button>
+      ))}
+      <button id={idp ? `${idp}-common` : undefined} type="button" disabled={disabled} aria-pressed={all} onClick={() => onChange(all ? '' : COMMON)} className={chip(all)}>{COMMON}</button>
+    </div>
+  );
+});
 
 /* ────────────────────────────── 상세 패널: 한 줄 평 + 구매 정보 ────────────────────────────── */
 function DetailPanel({ item, focusComment, places, onEval, onUpdate, onRemove, onClose }) {
@@ -365,7 +397,7 @@ function DetailPanel({ item, focusComment, places, onEval, onUpdate, onRemove, o
 }
 
 /* ────────────────────────────── 품목 행 (memo) ────────────────────────────── */
-const PartRow = memo(function PartRow({ item, expanded, places, onVerdict, onEval, onToggleExpand, onUpdate, onRemove }) {
+const PartRow = memo(function PartRow({ item, expanded, places, onBrand, onVerdict, onEval, onToggleExpand, onUpdate, onRemove }) {
   const d = derive(item);
   const tags = item.ev_tags || [];
   const hasReview = item.ev_comment || tags.length;
@@ -377,7 +409,7 @@ const PartRow = memo(function PartRow({ item, expanded, places, onVerdict, onEva
           <div className="flex flex-wrap items-center gap-2">
             {item.no && <span className="rounded-md bg-slate-900 px-2 py-0.5 text-xs font-bold tabular-nums text-white">#{item.no}</span>}
             <span className="rounded-md border border-slate-300 px-2 py-0.5 text-xs font-semibold text-slate-600">{item.category}</span>
-            {item.brand && <span className="rounded-md bg-orange-100 px-2 py-0.5 text-xs font-semibold text-orange-800">{item.brand}</span>}
+            {brandLabel(item) && <span className="rounded-md bg-orange-100 px-2 py-0.5 text-xs font-semibold text-orange-800">{brandLabel(item)}</span>}
             {item.purchase_place && <span className="rounded-md bg-sky-100 px-2 py-0.5 text-xs font-semibold text-sky-800">{item.purchase_place}</span>}
             {!item.ev_v && <span className={`rounded-md px-2 py-0.5 text-xs font-semibold ${NONE.badge}`}>평가 전</span>}
             {item._syncing && <span className="inline-flex items-center gap-1 text-xs font-semibold text-orange-700"><Loader2 size={12} className="animate-spin" />저장 중</span>}
@@ -393,6 +425,10 @@ const PartRow = memo(function PartRow({ item, expanded, places, onVerdict, onEva
         </div>
         <div className="min-w-0 space-y-2 lg:col-span-5">
           <VerdictPicker item={item} onVerdict={onVerdict} />
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`text-xs font-semibold ${brandsOf(item).length ? 'text-slate-500' : 'text-rose-600'}`}>{brandsOf(item).length ? '사용 브랜드' : '브랜드 선택 필요'}</span>
+            <BrandPicker value={item.brand} onChange={v => onBrand(item.id, v)} disabled={item._syncing} size="sm" />
+          </div>
           <button type="button" onClick={() => onToggleExpand(item.id, true)} className="flex w-full items-center gap-2 rounded-lg px-1 text-left text-sm hover:bg-slate-50">
             {hasReview ? (
               <span className="flex min-w-0 flex-wrap items-center gap-1.5">
@@ -499,30 +535,36 @@ const QuickAdd = memo(function QuickAdd({ items, places, onAdd, onMerge }) {
 
 /* ────────────────────────────── 묶어 보기: 구매처 → 분류 → 품목 ────────────────────────────── */
 const NO_PLACE = '구매처 미입력';
-const groupItems = items => {
-  const places = new Map();
+// by = 'brand': 한 품목이 여러 브랜드에 쓰이면 각 브랜드에 모두 나온다(공통 품목). by = 'place': 구매처별
+const groupItems = (items, by = 'place') => {
+  const groups = new Map();
+  const keysOf = it => (by === 'brand' ? (brandsOf(it).length ? brandsOf(it) : [NO_BRAND]) : [it.purchase_place || NO_PLACE]);
   items.forEach(it => {
-    const pk = it.purchase_place || NO_PLACE;
-    if (!places.has(pk)) places.set(pk, { name: pk, total: 0, items: [], cats: new Map() });
-    const g = places.get(pk); const amt = derive(it).amount;
-    g.total += amt; g.items.push(it);
-    if (!g.cats.has(it.category)) g.cats.set(it.category, { name: it.category, total: 0, items: [] });
-    const c = g.cats.get(it.category); c.total += amt; c.items.push(it);
+    const amt = derive(it).amount; const shared = by === 'brand' && brandsOf(it).length > 1;
+    keysOf(it).forEach(k => {
+      if (!groups.has(k)) groups.set(k, { name: k, total: 0, items: [], shared: 0, cats: new Map() });
+      const g = groups.get(k);
+      g.total += amt; g.items.push(it); if (shared) g.shared += 1;
+      if (!g.cats.has(it.category)) g.cats.set(it.category, { name: it.category, total: 0, items: [] });
+      const c = g.cats.get(it.category); c.total += amt; c.items.push(it);
+    });
   });
-  const byTotal = (a, b) => (a.name === NO_PLACE) - (b.name === NO_PLACE) || b.total - a.total;
-  return [...places.values()].sort(byTotal).map(g => ({ ...g, cats: [...g.cats.values()].sort((a, b) => b.total - a.total) }));
+  const empty = by === 'brand' ? NO_BRAND : NO_PLACE;
+  const order = g => (by === 'brand' && BRAND_LIST.includes(g.name) ? BRAND_LIST.indexOf(g.name) : 99);
+  const sorter = (a, b) => (a.name === empty) - (b.name === empty) || order(a) - order(b) || b.total - a.total;
+  return [...groups.values()].sort(sorter).map(g => ({ ...g, empty: g.name === empty, cats: [...g.cats.values()].sort((a, b) => b.total - a.total) }));
 };
 const readOpen = () => { try { return JSON.parse(lsGet('pur_open') || '{}'); } catch (e) { return {}; } };
 
-function GroupedList({ items, renderRow, forceOpen, openAll }) {
-  const groups = useMemo(() => groupItems(items), [items]);
+function GroupedList({ items, renderRow, forceOpen, openAll, by = 'place' }) {
+  const groups = useMemo(() => groupItems(items, by), [items, by]);
   const [open, setOpen] = useState(readOpen);
   useEffect(() => { lsSet('pur_open', JSON.stringify(open)); }, [open]);
   // 상위에서 "모두 펼치기/접기"를 누르면 현재 보이는 묶음 전체에 적용
   useEffect(() => {
     if (openAll === null || openAll === undefined) return;
     const next = {};
-    groups.forEach(g => { next['p:' + g.name] = openAll.v; g.cats.forEach(c => { next['c:' + g.name + '|' + c.name] = openAll.v; }); });
+    groups.forEach(g => { next['p:' + by + ':' + g.name] = openAll.v; g.cats.forEach(c => { next['c:' + by + ':' + g.name + '|' + c.name] = openAll.v; }); });
     setOpen(o => ({ ...o, ...next }));
   }, [openAll]);
   const isOpen = k => forceOpen || !!open[k];
@@ -531,20 +573,20 @@ function GroupedList({ items, renderRow, forceOpen, openAll }) {
   return (
     <div className="space-y-3">
       {groups.map(g => {
-        const pk = 'p:' + g.name; const po = isOpen(pk);
+        const pk = 'p:' + by + ':' + g.name; const po = isOpen(pk);
         return (
           <section key={g.name} className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
             <button type="button" onClick={() => toggle(pk)} aria-expanded={po}
               className="flex w-full items-center gap-3 px-4 py-3.5 text-left hover:bg-slate-50 touch-manipulation">
               <ChevronRight size={20} className={`shrink-0 text-slate-400 transition ${po ? 'rotate-90' : ''}`} />
-              <span className={`rounded-lg px-2.5 py-1 text-sm font-bold ${g.name === NO_PLACE ? 'bg-slate-100 text-slate-500' : 'bg-sky-100 text-sky-900'}`}>{g.name}</span>
-              <span className="text-sm text-slate-500">{g.items.length}건 · {g.cats.map(c => c.name).join(' · ')}</span>
+              <span className={`rounded-lg px-2.5 py-1 text-sm font-bold ${g.empty ? 'bg-rose-50 text-rose-700' : by === 'brand' ? 'bg-orange-100 text-orange-900' : 'bg-sky-100 text-sky-900'}`}>{g.name}</span>
+              <span className="text-sm text-slate-500">{g.items.length}건 · {g.cats.map(c => c.name).join(' · ')}{g.shared ? ` · 공통 ${g.shared}건 포함` : ''}</span>
               <b className="ml-auto text-lg font-extrabold tabular-nums text-slate-900">{fmtWon(g.total)}</b>
             </button>
             {po && (
               <div className="space-y-2 border-t border-slate-100 bg-slate-50 p-3">
                 {g.cats.map(c => {
-                  const ck = 'c:' + g.name + '|' + c.name; const co = isOpen(ck);
+                  const ck = 'c:' + by + ':' + g.name + '|' + c.name; const co = isOpen(ck);
                   return (
                     <div key={c.name}>
                       <button type="button" onClick={() => toggle(ck)} aria-expanded={co}
@@ -604,7 +646,7 @@ function CalendarView({ items, month, setMonth, selDay, setSelDay, renderRow }) 
             const key = `${monthKey}-${pad(d)}`;
             const list = byDay[key] || [];
             const total = list.reduce((s, it) => s + derive(it).amount, 0);
-            const byPlace = groupItems(list);
+            const byPlace = groupItems(list, 'place');
             const isSel = selDay === key; const dow = i % 7;
             return (
               <button key={i} type="button" onClick={() => setSelDay(isSel ? null : key)}
@@ -652,7 +694,7 @@ const tipStyle = { borderRadius: 12, border: '1px solid #e2e8f0', fontSize: 12 }
 function StatsView({ items, activity }) {
   const s = useMemo(() => {
     const dow = [1, 2, 3, 4, 5, 6, 0].map(d => ({ d: WEEK[d], 지출: 0 }));
-    const byDate = {}; const cat = {}; const sup = {}; const place = {}; const reason = {};
+    const byDate = {}; const cat = {}; const sup = {}; const place = {}; const brand = {}; const reason = {};
     const vd = { usable: { n: 0, amt: 0 }, later: { n: 0, amt: 0 }, unusable: { n: 0, amt: 0 }, none: { n: 0, amt: 0 } };
     items.forEach(it => {
       const { amount } = derive(it);
@@ -661,6 +703,7 @@ function StatsView({ items, activity }) {
       cat[it.category] = (cat[it.category] || 0) + amount;
       const sk = it.supplier || '거래처 미입력'; sup[sk] = (sup[sk] || 0) + amount;
       const pk = it.purchase_place || '구매처 미입력'; place[pk] = (place[pk] || 0) + amount;
+      (brandsOf(it).length ? brandsOf(it) : [NO_BRAND]).forEach(b => { brand[b] = (brand[b] || 0) + amount; });
       const k = it.ev_v || 'none'; vd[k].n += 1; vd[k].amt += amount;
       if (it.ev_v === 'later' || it.ev_v === 'unusable') (it.ev_tags || []).filter(t => TAGS_BAD.includes(t)).forEach(t => { reason[t] = (reason[t] || 0) + 1; });
     });
@@ -668,7 +711,7 @@ function StatsView({ items, activity }) {
     const daily = Object.keys(byDate).sort().map(k => { cum += byDate[k]; return { day: k.slice(5).replace('-', '/'), 일지출: byDate[k], 누적: cum }; });
     const verdict = [...VKEYS.map(k => ({ key: k, name: VERDICT[k].label, value: vd[k].amt, n: vd[k].n, hex: VERDICT[k].hex })), { key: 'none', name: NONE.label, value: vd.none.amt, n: vd.none.n, hex: NONE.hex }].filter(x => x.n);
     const toBars = o => Object.entries(o).map(([name, v]) => ({ name, 지출: v })).sort((a, b) => b.지출 - a.지출);
-    return { dow, daily, verdict, cat: toBars(cat), sup: toBars(sup).slice(0, 8), place: toBars(place).slice(0, 8), reason: Object.entries(reason).map(([name, 건수]) => ({ name, 건수 })).sort((a, b) => b.건수 - a.건수) };
+    return { dow, daily, verdict, cat: toBars(cat), sup: toBars(sup).slice(0, 8), place: toBars(place).slice(0, 8), brand: toBars(brand), reason: Object.entries(reason).map(([name, 건수]) => ({ name, 건수 })).sort((a, b) => b.건수 - a.건수) };
   }, [items]);
 
   if (!items.length) return <Card title="통계">{<Empty>선택한 기간·필터에 구매 내역이 없습니다.</Empty>}</Card>;
@@ -737,6 +780,10 @@ function StatsView({ items, activity }) {
 
       <Card title="보류·불가 사유" sub="추후 사용·사용 불가 품목에 붙은 태그 빈도">
         {s.reason.length === 0 ? <Empty>보류·불가 사유 태그가 아직 없습니다.</Empty> : <div className="h-52">{hBar(s.reason, '건수', '#e11d48', 80, 'n')}</div>}
+      </Card>
+
+      <Card title="브랜드별 지출" sub="어느 브랜드에서 쓰나 · 공통 품목은 각 브랜드에 모두 포함(합계가 총 지출보다 클 수 있음)">
+        <div className="h-60">{hBar(s.brand, '지출', '#c2410c', 96)}</div>
       </Card>
 
       <Card title="구매처별 지출" sub="어디서 샀나 · 상위 8곳">
@@ -813,6 +860,8 @@ function App() {
   const [inflight, setInflight] = useState(0);
   const [rt, setRt] = useState('connecting');
   const [openAll, setOpenAll] = useState(null);
+  const [groupBy, setGroupBy] = useState(() => lsGet('pur_groupby') || 'brand');
+  useEffect(() => { lsSet('pur_groupby', groupBy); }, [groupBy]);
   const now = new Date();
   const [month, setMonth] = useState({ y: now.getFullYear(), m: now.getMonth() });
   const [selDay, setSelDay] = useState(null);
@@ -926,6 +975,16 @@ function App() {
   const addRef = useRef(addItem); addRef.current = addItem;
 
   /* 구매 정보 수정 */
+  // 목록에서 브랜드 버튼을 누르면 바로 저장 (실패 시 되돌림)
+  const setBrand = useCallback(async (id, brand) => {
+    const snap = itemsRef.current.find(x => x.id === id);
+    if (!snap) return;
+    patchRow(id, { brand, _syncing: true });
+    const { data, error } = await track(sb.from(TABLE).update({ brand }).eq('id', id).select().single());
+    if (error) { replaceRow(snap); pushToast({ tone: 'error', text: `${snap.name} 브랜드 저장 실패: ${errMsg(error)}` }); return; }
+    replaceRow(data);
+  }, [patchRow, replaceRow, pushToast]);
+
   const updateItem = useCallback(async (id, patch) => {
     const snap = itemsRef.current.find(x => x.id === id);
     if (!snap) return;
@@ -978,7 +1037,7 @@ function App() {
     return items.filter(it => {
       if (tokens.length) { const h = derive(it).hay; if (!tokens.every(tk => h.includes(tk))) return false; }
       if (fCat.length && !fCat.includes(it.category)) return false;
-      if (fBrand.length && !fBrand.includes(it.brand || '')) return false;
+      if (fBrand.length) { const bs = brandsOf(it); if (!fBrand.some(b => (b === NO_BRAND ? !bs.length : bs.includes(b)))) return false; }
       if (fPlace.length && !fPlace.includes(it.purchase_place || '')) return false;
       return true;
     });
@@ -1013,15 +1072,16 @@ function App() {
   // 구매처: 최근에 쓴 순서
   const places = useMemo(() => [...new Set([...items].sort(byDateDesc).map(i => i.purchase_place).filter(Boolean))].slice(0, 8), [items]);
   const allPlaces = useMemo(() => [...new Set(items.map(i => i.purchase_place).filter(Boolean))].slice(0, 300), [items]);
-  const brandChips = useMemo(() => [...new Set([...BRANDS, ...items.map(i => i.brand).filter(Boolean)])], [items]);
+  const brandChips = [...BRAND_LIST, NO_BRAND];
+  const noBrandCount = useMemo(() => items.filter(i => !brandsOf(i).length).length, [items]);
 
   const filterActive = q || fVerdict.length || fCat.length || fBrand.length || fPlace.length;
   const clearFilters = () => { setQuery(''); setFVerdict([]); setFCat([]); setFBrand([]); setFPlace([]); };
 
   const renderRow = useCallback(it => (
     <PartRow key={it.id} item={it} places={places} expanded={expanded?.id === it.id ? expanded.mode : false}
-      onVerdict={setVerdict} onEval={commitEval} onToggleExpand={toggleExpand} onUpdate={updateItem} onRemove={removeItem} />
-  ), [expanded, places, setVerdict, commitEval, toggleExpand, updateItem, removeItem]);
+      onBrand={setBrand} onVerdict={setVerdict} onEval={commitEval} onToggleExpand={toggleExpand} onUpdate={updateItem} onRemove={removeItem} />
+  ), [expanded, places, setBrand, setVerdict, commitEval, toggleExpand, updateItem, removeItem]);
 
   const saveAuthor = e => { e.preventDefault(); const n = authorDraft.trim().slice(0, 20); if (!n) return; setAuthor(n); lsSet('pur_author', n); setAuthorDraft(''); };
   const VIEWS = [{ k: 'list', label: '리스트', icon: List }, { k: 'calendar', label: '달력', icon: CalendarDays }, { k: 'stats', label: '통계', icon: BarChart3 }];
@@ -1109,7 +1169,7 @@ function App() {
           <div className="flex gap-2 overflow-x-auto pb-1">
             {CATS.map(c => <Chip key={c} active={fCat.includes(c)} onClick={() => tCat(c)}>{c}</Chip>)}
             <span className="mx-1 w-px shrink-0 bg-slate-200" />
-            {brandChips.map(b => <Chip key={b} active={fBrand.includes(b)} onClick={() => tBrand(b)}>{b}</Chip>)}
+            {brandChips.map(b => <Chip key={b} active={fBrand.includes(b)} onClick={() => tBrand(b)} dot={b === NO_BRAND ? 'bg-rose-500' : 'bg-orange-500'}>{b}{b === NO_BRAND ? <span className="tabular-nums opacity-70"> {noBrandCount}</span> : null}</Chip>)}
             {places.length > 0 && <span className="mx-1 w-px shrink-0 bg-slate-200" />}
             {places.map(p => <Chip key={p} active={fPlace.includes(p)} onClick={() => tPlace(p)} dot="bg-sky-500">{p}</Chip>)}
             {filterActive ? <button type="button" onClick={clearFilters} className="inline-flex h-11 shrink-0 items-center gap-1 rounded-full px-4 text-sm font-bold text-orange-700 hover:bg-orange-50"><RotateCcw size={14} />필터 초기화</button> : null}
@@ -1152,10 +1212,16 @@ function App() {
         ) : view === 'list' ? (
           <div className="space-y-3">
             <QuickAdd items={items} places={places} onAdd={addItem} onMerge={mergeQty} />
-            <div className="flex items-center justify-between px-1 text-sm text-slate-500">
+            <div className="flex flex-wrap items-center gap-2 px-1 text-sm text-slate-500">
               <span><b className="text-slate-900">{filtered.length}</b>건 {filterActive || period !== 'all' ? `(전체 ${items.length}건)` : ''}</span>
+              <span className="inline-flex rounded-lg bg-slate-200 p-0.5">
+                {[['brand', '브랜드별'], ['place', '구매처별']].map(([k, l]) => (
+                  <button key={k} type="button" onClick={() => setGroupBy(k)} aria-pressed={groupBy === k}
+                    className={`h-8 rounded-md px-3 text-sm font-bold ${groupBy === k ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'}`}>{l}</button>
+                ))}
+              </span>
               {filtered.length > 0 && !q && (
-                <span className="flex gap-1">
+                <span className="ml-auto flex gap-1">
                   <button type="button" onClick={() => setOpenAll({ v: true, t: Date.now() })} className="h-9 rounded-lg px-3 text-sm font-semibold text-slate-600 hover:bg-slate-200">모두 펼치기</button>
                   <button type="button" onClick={() => setOpenAll({ v: false, t: Date.now() })} className="h-9 rounded-lg px-3 text-sm font-semibold text-slate-600 hover:bg-slate-200">모두 접기</button>
                 </span>
@@ -1163,7 +1229,7 @@ function App() {
             </div>
             {filtered.length ? (
               // 검색 중에는 찾은 품목이 바로 보이도록 전부 펼친다
-              <GroupedList items={filtered} renderRow={renderRow} forceOpen={!!q} openAll={openAll} />
+              <GroupedList items={filtered} renderRow={renderRow} forceOpen={!!q} openAll={openAll} by={groupBy} />
             ) : (
               <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center">
                 {items.length === 0 ? (
