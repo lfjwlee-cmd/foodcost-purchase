@@ -1104,42 +1104,48 @@ const QuickAdd = memo(function QuickAdd({
   }), err));
 });
 const NO_PLACE = '구매처 미입력';
+const catsOf = list => {
+  const m = new Map();
+  list.forEach(it => {
+    if (!m.has(it.category)) m.set(it.category, {
+      name: it.category,
+      total: 0,
+      items: []
+    });
+    const c = m.get(it.category);
+    c.total += derive(it).amount;
+    c.items.push(it);
+  });
+  return [...m.values()].sort((a, b) => b.total - a.total);
+};
+const sumOf = list => list.reduce((s, it) => s + derive(it).amount, 0);
 const groupItems = (items, by = 'place') => {
   const groups = new Map();
   const keysOf = it => by === 'brand' ? brandsOf(it).length ? brandsOf(it) : [NO_BRAND] : [it.purchase_place || NO_PLACE];
-  items.forEach(it => {
-    const amt = derive(it).amount;
-    const shared = by === 'brand' && brandsOf(it).length > 1;
-    keysOf(it).forEach(k => {
-      if (!groups.has(k)) groups.set(k, {
-        name: k,
-        total: 0,
-        items: [],
-        shared: 0,
-        cats: new Map()
-      });
-      const g = groups.get(k);
-      g.total += amt;
-      g.items.push(it);
-      if (shared) g.shared += 1;
-      if (!g.cats.has(it.category)) g.cats.set(it.category, {
-        name: it.category,
-        total: 0,
-        items: []
-      });
-      const c = g.cats.get(it.category);
-      c.total += amt;
-      c.items.push(it);
+  items.forEach(it => keysOf(it).forEach(k => {
+    if (!groups.has(k)) groups.set(k, {
+      name: k,
+      items: []
     });
-  });
+    groups.get(k).items.push(it);
+  }));
   const empty = by === 'brand' ? NO_BRAND : NO_PLACE;
   const order = g => by === 'brand' && BRAND_LIST.includes(g.name) ? BRAND_LIST.indexOf(g.name) : 99;
-  const sorter = (a, b) => (a.name === empty) - (b.name === empty) || order(a) - order(b) || b.total - a.total;
-  return [...groups.values()].sort(sorter).map(g => ({
-    ...g,
-    empty: g.name === empty,
-    cats: [...g.cats.values()].sort((a, b) => b.total - a.total)
-  }));
+  return [...groups.values()].map(g => {
+    const shared = by === 'brand' ? g.items.filter(it => brandsOf(it).length > 1) : [];
+    const own = g.items.filter(it => !shared.includes(it));
+    return {
+      ...g,
+      empty: g.name === empty,
+      total: sumOf(g.items),
+      own,
+      ownTotal: sumOf(own),
+      cats: catsOf(own),
+      shared,
+      sharedTotal: sumOf(shared),
+      sharedCats: catsOf(shared)
+    };
+  }).sort((a, b) => a.empty - b.empty || order(a) - order(b) || b.total - a.total);
 };
 const readOpen = () => {
   try {
@@ -1148,6 +1154,38 @@ const readOpen = () => {
     return {};
   }
 };
+function CatRows({
+  cats,
+  prefix,
+  isOpen,
+  toggle,
+  renderRow,
+  showShare
+}) {
+  return cats.map(c => {
+    const ck = prefix + '|' + c.name;
+    const co = isOpen(ck);
+    return React.createElement("div", {
+      key: c.name
+    }, React.createElement("button", {
+      type: "button",
+      onClick: () => toggle(ck),
+      "aria-expanded": co,
+      className: "flex w-full items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-left hover:border-slate-400 touch-manipulation"
+    }, React.createElement(ChevronRight, {
+      size: 16,
+      className: `shrink-0 text-slate-400 transition ${co ? 'rotate-90' : ''}`
+    }), React.createElement("span", {
+      className: "shrink-0 text-sm font-bold text-slate-800"
+    }, c.name), React.createElement("span", {
+      className: "truncate text-xs text-slate-500"
+    }, c.items.length, "건 · ", c.items.map(it => showShare && brandLabel(it) !== COMMON ? `${it.name}(${brandLabel(it)})` : it.name).join(', ')), React.createElement("b", {
+      className: "ml-auto shrink-0 text-sm font-bold tabular-nums text-slate-900"
+    }, fmtWon(c.total))), co && React.createElement("div", {
+      className: "mt-2 space-y-2 pl-2 sm:pl-4"
+    }, c.items.map(renderRow)));
+  });
+}
 function GroupedList({
   items,
   renderRow,
@@ -1160,13 +1198,21 @@ function GroupedList({
   useEffect(() => {
     lsSet('pur_open', JSON.stringify(open));
   }, [open]);
+  const keyP = g => 'p:' + by + ':' + g.name;
+  const keyC = g => 'c:' + by + ':' + g.name;
+  const keyS = g => 's:' + by + ':' + g.name;
+  const keySC = g => 'sc:' + by + ':' + g.name;
   useEffect(() => {
     if (openAll === null || openAll === undefined) return;
     const next = {};
     groups.forEach(g => {
-      next['p:' + by + ':' + g.name] = openAll.v;
+      next[keyP(g)] = openAll.v;
+      next[keyS(g)] = openAll.v;
       g.cats.forEach(c => {
-        next['c:' + by + ':' + g.name + '|' + c.name] = openAll.v;
+        next[keyC(g) + '|' + c.name] = openAll.v;
+      });
+      g.sharedCats.forEach(c => {
+        next[keySC(g) + '|' + c.name] = openAll.v;
       });
     });
     setOpen(o => ({
@@ -1183,50 +1229,64 @@ function GroupedList({
   return React.createElement("div", {
     className: "space-y-3"
   }, groups.map(g => {
-    const pk = 'p:' + by + ':' + g.name;
-    const po = isOpen(pk);
+    const po = isOpen(keyP(g));
+    const so = isOpen(keyS(g));
+    const summary = by === 'brand' && g.shared.length ? `${g.items.length}건 · 전용 ${g.own.length}건 · 공통 ${g.shared.length}건` : `${g.items.length}건 · ${g.cats.map(c => c.name).join(' · ')}`;
     return React.createElement("section", {
       key: g.name,
       className: "overflow-hidden rounded-2xl border border-slate-200 bg-white"
     }, React.createElement("button", {
       type: "button",
-      onClick: () => toggle(pk),
+      onClick: () => toggle(keyP(g)),
       "aria-expanded": po,
       className: "flex w-full items-center gap-3 px-4 py-3.5 text-left hover:bg-slate-50 touch-manipulation"
     }, React.createElement(ChevronRight, {
       size: 20,
       className: `shrink-0 text-slate-400 transition ${po ? 'rotate-90' : ''}`
     }), React.createElement("span", {
-      className: `rounded-lg px-2.5 py-1 text-sm font-bold ${g.empty ? 'bg-rose-50 text-rose-700' : by === 'brand' ? 'bg-orange-100 text-orange-900' : 'bg-sky-100 text-sky-900'}`
+      className: `shrink-0 rounded-lg px-2.5 py-1 text-sm font-bold ${g.empty ? 'bg-rose-50 text-rose-700' : by === 'brand' ? 'bg-orange-100 text-orange-900' : 'bg-sky-100 text-sky-900'}`
     }, g.name), React.createElement("span", {
-      className: "text-sm text-slate-500"
-    }, g.items.length, "건 · ", g.cats.map(c => c.name).join(' · '), g.shared ? ` · 공통 ${g.shared}건 포함` : ''), React.createElement("b", {
-      className: "ml-auto text-lg font-extrabold tabular-nums text-slate-900"
+      className: "truncate text-sm text-slate-500"
+    }, summary), React.createElement("b", {
+      className: "ml-auto shrink-0 text-lg font-extrabold tabular-nums text-slate-900"
     }, fmtWon(g.total))), po && React.createElement("div", {
       className: "space-y-2 border-t border-slate-100 bg-slate-50 p-3"
-    }, g.cats.map(c => {
-      const ck = 'c:' + by + ':' + g.name + '|' + c.name;
-      const co = isOpen(ck);
-      return React.createElement("div", {
-        key: c.name
-      }, React.createElement("button", {
-        type: "button",
-        onClick: () => toggle(ck),
-        "aria-expanded": co,
-        className: "flex w-full items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-left hover:border-slate-400 touch-manipulation"
-      }, React.createElement(ChevronRight, {
-        size: 16,
-        className: `shrink-0 text-slate-400 transition ${co ? 'rotate-90' : ''}`
-      }), React.createElement("span", {
-        className: "text-sm font-bold text-slate-800"
-      }, c.name), React.createElement("span", {
-        className: "truncate text-xs text-slate-500"
-      }, c.items.length, "건 · ", c.items.map(it => it.name).join(', ')), React.createElement("b", {
-        className: "ml-auto shrink-0 text-sm font-bold tabular-nums text-slate-900"
-      }, fmtWon(c.total))), co && React.createElement("div", {
-        className: "mt-2 space-y-2 pl-2 sm:pl-4"
-      }, c.items.map(renderRow)));
-    })));
+    }, g.cats.length > 0 && by === 'brand' && g.shared.length > 0 && React.createElement("p", {
+      className: "flex items-center justify-between px-1 text-xs font-bold text-slate-500"
+    }, React.createElement("span", null, g.name, " 전용 · ", g.own.length, "건"), React.createElement("span", {
+      className: "tabular-nums"
+    }, fmtWon(g.ownTotal))), React.createElement(CatRows, {
+      cats: g.cats,
+      prefix: keyC(g),
+      isOpen: isOpen,
+      toggle: toggle,
+      renderRow: renderRow
+    }), g.shared.length > 0 && React.createElement("div", {
+      className: `rounded-xl border-2 border-dashed border-amber-300 bg-amber-50 p-2 ${g.cats.length ? 'mt-3' : ''}`
+    }, React.createElement("button", {
+      type: "button",
+      onClick: () => toggle(keyS(g)),
+      "aria-expanded": so,
+      className: "flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left hover:bg-amber-100 touch-manipulation"
+    }, React.createElement(ChevronRight, {
+      size: 16,
+      className: `shrink-0 text-amber-700 transition ${so ? 'rotate-90' : ''}`
+    }), React.createElement("span", {
+      className: "shrink-0 rounded-md bg-amber-200 px-2 py-0.5 text-sm font-bold text-amber-900"
+    }, "공통 품목"), React.createElement("span", {
+      className: "truncate text-xs text-amber-900"
+    }, g.shared.length, "건 · 다른 브랜드와 함께 씀 · ", g.sharedCats.map(c => c.name).join(' · ')), React.createElement("b", {
+      className: "ml-auto shrink-0 text-sm font-bold tabular-nums text-amber-950"
+    }, fmtWon(g.sharedTotal))), so && React.createElement("div", {
+      className: "mt-2 space-y-2"
+    }, React.createElement(CatRows, {
+      cats: g.sharedCats,
+      prefix: keySC(g),
+      isOpen: isOpen,
+      toggle: toggle,
+      renderRow: renderRow,
+      showShare: true
+    })))));
   }));
 }
 function CalendarView({
