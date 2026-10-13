@@ -16,22 +16,29 @@ const CATS = ['육류', '해산물', '농산물', '가공품', '소스·양념',
 const UNITS = ['봉', '팩', '묶음', '단', '개', '박스', '병'];
 const CONTENT_UNITS = ['g', 'kg', 'ml', 'L', '장', '개'];
 const BRAND_LIST = ['삼대미역', '인생아구찜', '어화락'];
-const COMMON = '공통'; // 세 브랜드 모두
-const NO_BRAND = '브랜드 미지정';
-// brand 칸 → 브랜드 배열. '공통'이면 세 곳 모두
+const COMMON = '공통'; // 세 브랜드 모두 (개발실은 포함하지 않음)
+const DEV = '개발실';  // 개발실 자체 사용(테스트·연구)
+const NO_BRAND = '사용처 미지정';
+// brand 칸 → 사용처 배열. 저장 예: '삼대미역,어화락' / '공통' / '공통,개발실' / '개발실'
 const brandsOf = it => {
   const v = (typeof it === 'string' ? it : it.brand) || '';
-  if (v.trim() === COMMON) return [...BRAND_LIST];
-  return v.split(',').map(x => x.trim()).filter(Boolean);
+  const out = [];
+  v.split(',').map(x => x.trim()).filter(Boolean).forEach(t => (t === COMMON ? BRAND_LIST : [t]).forEach(b => { if (!out.includes(b)) out.push(b); }));
+  return out;
 };
-// 브랜드 배열 → brand 칸 값. 세 곳 모두면 '공통'
+// 사용처 배열 → brand 칸 값. 세 브랜드가 모두 있으면 '공통'으로 줄여 저장
 const encodeBrands = arr => {
   const known = BRAND_LIST.filter(b => arr.includes(b));
-  const extra = arr.filter(b => !BRAND_LIST.includes(b) && b !== COMMON);
-  if (known.length === BRAND_LIST.length && !extra.length) return COMMON;
-  return [...known, ...extra].join(',');
+  const dev = arr.includes(DEV) ? [DEV] : [];
+  const extra = arr.filter(b => !BRAND_LIST.includes(b) && b !== COMMON && b !== DEV);
+  const head = known.length === BRAND_LIST.length ? [COMMON] : known;
+  return [...head, ...dev, ...extra].join(',');
 };
-const brandLabel = it => { const v = brandsOf(it); return !v.length ? '' : encodeBrands(v) === COMMON ? COMMON : v.join(' · '); };
+const brandLabel = it => {
+  const v = brandsOf(it); if (!v.length) return '';
+  const all = BRAND_LIST.every(b => v.includes(b));
+  return (all ? [COMMON, ...v.filter(b => !BRAND_LIST.includes(b))] : v).join(' · ');
+};
 
 const VERDICT = {
   usable: { label: '사용 가능', icon: CheckCircle2, on: 'bg-emerald-600 text-white border-emerald-600', off: 'border-emerald-200 text-emerald-800 hover:bg-emerald-50', dot: 'bg-emerald-500', hex: '#059669' },
@@ -283,7 +290,7 @@ function PurchaseFields({ f, set, idp, places, showName, nameProps }) {
       <label className={`${lab} md:col-span-3`}>분류
         <select id={`${idp}-cat`} value={f.category} onChange={e => set({ category: e.target.value })} className={`${field} mt-1`}>{CATS.map(c => <option key={c}>{c}</option>)}</select>
       </label>
-      <div className={`${lab} col-span-2 md:col-span-3`}>어느 브랜드에서 쓰나요? <span className="font-normal text-slate-500">(여러 개 선택)</span>
+      <div className={`${lab} col-span-2 md:col-span-3`}>어디에서 쓰나요? <span className="font-normal text-slate-500">(선택 · 여러 개 가능)</span>
         <div className="mt-1"><BrandPicker value={f.brand} onChange={v => set({ brand: v })} size="sm" idp={`${idp}-brand`} /></div>
       </div>
     </div>
@@ -311,16 +318,20 @@ const PriceLine = ({ f }) => {
 
 const BrandPicker = memo(function BrandPicker({ value, onChange, disabled, size = 'md', idp }) {
   const cur = brandsOf(value);
-  const all = encodeBrands(cur) === COMMON;
+  const all = BRAND_LIST.every(b => cur.includes(b));
   const toggle = b => onChange(encodeBrands(cur.includes(b) ? cur.filter(x => x !== b) : [...cur, b]));
   const h = size === 'sm' ? 'h-9 px-2.5 text-xs' : 'h-10 px-3 text-sm';
   const chip = on => `${h} rounded-lg border font-bold touch-manipulation disabled:opacity-50 ${on ? 'border-orange-600 bg-orange-600 text-white' : 'border-orange-200 bg-white text-orange-900 hover:bg-orange-50'}`;
   return (
-    <div className="flex flex-wrap gap-1.5" role="group" aria-label="사용 브랜드">
+    <div className="flex flex-wrap gap-1.5" role="group" aria-label="사용처">
       {BRAND_LIST.map(b => (
         <button key={b} id={idp ? `${idp}-${b}` : undefined} type="button" disabled={disabled} aria-pressed={cur.includes(b)} onClick={() => toggle(b)} className={chip(cur.includes(b))}>{b}</button>
       ))}
-      <button id={idp ? `${idp}-common` : undefined} type="button" disabled={disabled} aria-pressed={all} onClick={() => onChange(all ? '' : COMMON)} className={chip(all)}>{COMMON}</button>
+      <button id={idp ? `${idp}-common` : undefined} type="button" disabled={disabled} aria-pressed={all}
+        onClick={() => onChange(encodeBrands(all ? cur.filter(b => !BRAND_LIST.includes(b)) : [...BRAND_LIST, ...cur]))} className={chip(all)}>{COMMON}</button>
+      <span className="mx-0.5 w-px self-stretch bg-slate-200" aria-hidden="true" />
+      <button id={idp ? `${idp}-dev` : undefined} type="button" disabled={disabled} aria-pressed={cur.includes(DEV)} onClick={() => toggle(DEV)}
+        className={`${h} rounded-lg border font-bold touch-manipulation disabled:opacity-50 ${cur.includes(DEV) ? 'border-violet-600 bg-violet-600 text-white' : 'border-violet-200 bg-white text-violet-800 hover:bg-violet-50'}`}>{DEV}</button>
     </div>
   );
 });
@@ -426,7 +437,7 @@ const PartRow = memo(function PartRow({ item, expanded, places, onBrand, onVerdi
         <div className="min-w-0 space-y-2 lg:col-span-5">
           <VerdictPicker item={item} onVerdict={onVerdict} />
           <div className="flex flex-wrap items-center gap-2">
-            <span className={`text-xs font-semibold ${brandsOf(item).length ? 'text-slate-500' : 'text-rose-600'}`}>{brandsOf(item).length ? '사용 브랜드' : '브랜드 선택 필요'}</span>
+            <span className={`text-xs font-semibold ${brandsOf(item).length ? 'text-slate-500' : 'text-amber-600'}`}>{brandsOf(item).length ? '사용처' : '사용처 미지정'}</span>
             <BrandPicker value={item.brand} onChange={v => onBrand(item.id, v)} disabled={item._syncing} size="sm" />
           </div>
           <button type="button" onClick={() => onToggleExpand(item.id, true)} className="flex w-full items-center gap-2 rounded-lg px-1 text-left text-sm hover:bg-slate-50">
@@ -555,7 +566,7 @@ const groupItems = (items, by = 'place') => {
     groups.get(k).items.push(it);
   }));
   const empty = by === 'brand' ? NO_BRAND : NO_PLACE;
-  const order = g => (by === 'brand' && BRAND_LIST.includes(g.name) ? BRAND_LIST.indexOf(g.name) : 99);
+  const order = g => (by !== 'brand' ? 99 : BRAND_LIST.includes(g.name) ? BRAND_LIST.indexOf(g.name) : g.name === DEV ? BRAND_LIST.length : 99);
   return [...groups.values()].map(g => {
     const shared = by === 'brand' ? g.items.filter(it => brandsOf(it).length > 1) : [];
     const own = g.items.filter(it => !shared.includes(it));
@@ -617,7 +628,7 @@ function GroupedList({ items, renderRow, forceOpen, openAll, by = 'place' }) {
             <button type="button" onClick={() => toggle(keyP(g))} aria-expanded={po}
               className="flex w-full items-center gap-3 px-4 py-3.5 text-left hover:bg-slate-50 touch-manipulation">
               <ChevronRight size={20} className={`shrink-0 text-slate-400 transition ${po ? 'rotate-90' : ''}`} />
-              <span className={`shrink-0 rounded-lg px-2.5 py-1 text-sm font-bold ${g.empty ? 'bg-rose-50 text-rose-700' : by === 'brand' ? 'bg-orange-100 text-orange-900' : 'bg-sky-100 text-sky-900'}`}>{g.name}</span>
+              <span className={`shrink-0 rounded-lg px-2.5 py-1 text-sm font-bold ${g.empty ? (by === 'brand' ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-500') : by === 'brand' ? (g.name === DEV ? 'bg-violet-100 text-violet-900' : 'bg-orange-100 text-orange-900') : 'bg-sky-100 text-sky-900'}`}>{g.name}</span>
               <span className="truncate text-sm text-slate-500">{summary}</span>
               <b className="ml-auto shrink-0 text-lg font-extrabold tabular-nums text-slate-900">{fmtWon(g.total)}</b>
             </button>
@@ -635,7 +646,7 @@ function GroupedList({ items, renderRow, forceOpen, openAll, by = 'place' }) {
                       className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left hover:bg-amber-100 touch-manipulation">
                       <ChevronRight size={16} className={`shrink-0 text-amber-700 transition ${so ? 'rotate-90' : ''}`} />
                       <span className="shrink-0 rounded-md bg-amber-200 px-2 py-0.5 text-sm font-bold text-amber-900">공통 품목</span>
-                      <span className="truncate text-xs text-amber-900">{g.shared.length}건 · 다른 브랜드와 함께 씀 · {g.sharedCats.map(c => c.name).join(' · ')}</span>
+                      <span className="truncate text-xs text-amber-900">{g.shared.length}건 · 다른 곳과 함께 씀 · {g.sharedCats.map(c => c.name).join(' · ')}</span>
                       <b className="ml-auto shrink-0 text-sm font-bold tabular-nums text-amber-950">{fmtWon(g.sharedTotal)}</b>
                     </button>
                     {so && <div className="mt-2 space-y-2"><CatRows cats={g.sharedCats} prefix={keySC(g)} isOpen={isOpen} toggle={toggle} renderRow={renderRow} showShare /></div>}
@@ -823,7 +834,7 @@ function StatsView({ items, activity }) {
         {s.reason.length === 0 ? <Empty>보류·불가 사유 태그가 아직 없습니다.</Empty> : <div className="h-52">{hBar(s.reason, '건수', '#e11d48', 80, 'n')}</div>}
       </Card>
 
-      <Card title="브랜드별 지출" sub="어느 브랜드에서 쓰나 · 공통 품목은 각 브랜드에 모두 포함(합계가 총 지출보다 클 수 있음)">
+      <Card title="사용처별 지출" sub="브랜드·개발실 · 공통 품목은 각 브랜드에 모두 포함(합계가 총 지출보다 클 수 있음)">
         <div className="h-60">{hBar(s.brand, '지출', '#c2410c', 96)}</div>
       </Card>
 
@@ -1113,7 +1124,7 @@ function App() {
   // 구매처: 최근에 쓴 순서
   const places = useMemo(() => [...new Set([...items].sort(byDateDesc).map(i => i.purchase_place).filter(Boolean))].slice(0, 8), [items]);
   const allPlaces = useMemo(() => [...new Set(items.map(i => i.purchase_place).filter(Boolean))].slice(0, 300), [items]);
-  const brandChips = [...BRAND_LIST, NO_BRAND];
+  const brandChips = [...BRAND_LIST, DEV, NO_BRAND];
   const noBrandCount = useMemo(() => items.filter(i => !brandsOf(i).length).length, [items]);
 
   const filterActive = q || fVerdict.length || fCat.length || fBrand.length || fPlace.length;
@@ -1210,7 +1221,7 @@ function App() {
           <div className="flex gap-2 overflow-x-auto pb-1">
             {CATS.map(c => <Chip key={c} active={fCat.includes(c)} onClick={() => tCat(c)}>{c}</Chip>)}
             <span className="mx-1 w-px shrink-0 bg-slate-200" />
-            {brandChips.map(b => <Chip key={b} active={fBrand.includes(b)} onClick={() => tBrand(b)} dot={b === NO_BRAND ? 'bg-rose-500' : 'bg-orange-500'}>{b}{b === NO_BRAND ? <span className="tabular-nums opacity-70"> {noBrandCount}</span> : null}</Chip>)}
+            {brandChips.map(b => <Chip key={b} active={fBrand.includes(b)} onClick={() => tBrand(b)} dot={b === NO_BRAND ? 'bg-amber-500' : b === DEV ? 'bg-violet-500' : 'bg-orange-500'}>{b}{b === NO_BRAND ? <span className="tabular-nums opacity-70"> {noBrandCount}</span> : null}</Chip>)}
             {places.length > 0 && <span className="mx-1 w-px shrink-0 bg-slate-200" />}
             {places.map(p => <Chip key={p} active={fPlace.includes(p)} onClick={() => tPlace(p)} dot="bg-sky-500">{p}</Chip>)}
             {filterActive ? <button type="button" onClick={clearFilters} className="inline-flex h-11 shrink-0 items-center gap-1 rounded-full px-4 text-sm font-bold text-orange-700 hover:bg-orange-50"><RotateCcw size={14} />필터 초기화</button> : null}
@@ -1256,7 +1267,7 @@ function App() {
             <div className="flex flex-wrap items-center gap-2 px-1 text-sm text-slate-500">
               <span><b className="text-slate-900">{filtered.length}</b>건 {filterActive || period !== 'all' ? `(전체 ${items.length}건)` : ''}</span>
               <span className="inline-flex rounded-lg bg-slate-200 p-0.5">
-                {[['brand', '브랜드별'], ['place', '구매처별']].map(([k, l]) => (
+                {[['brand', '사용처별'], ['place', '구매처별']].map(([k, l]) => (
                   <button key={k} type="button" onClick={() => setGroupBy(k)} aria-pressed={groupBy === k}
                     className={`h-8 rounded-md px-3 text-sm font-bold ${groupBy === k ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'}`}>{l}</button>
                 ))}

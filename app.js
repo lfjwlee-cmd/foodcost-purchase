@@ -61,21 +61,28 @@ const UNITS = ['봉', '팩', '묶음', '단', '개', '박스', '병'];
 const CONTENT_UNITS = ['g', 'kg', 'ml', 'L', '장', '개'];
 const BRAND_LIST = ['삼대미역', '인생아구찜', '어화락'];
 const COMMON = '공통';
-const NO_BRAND = '브랜드 미지정';
+const DEV = '개발실';
+const NO_BRAND = '사용처 미지정';
 const brandsOf = it => {
   const v = (typeof it === 'string' ? it : it.brand) || '';
-  if (v.trim() === COMMON) return [...BRAND_LIST];
-  return v.split(',').map(x => x.trim()).filter(Boolean);
+  const out = [];
+  v.split(',').map(x => x.trim()).filter(Boolean).forEach(t => (t === COMMON ? BRAND_LIST : [t]).forEach(b => {
+    if (!out.includes(b)) out.push(b);
+  }));
+  return out;
 };
 const encodeBrands = arr => {
   const known = BRAND_LIST.filter(b => arr.includes(b));
-  const extra = arr.filter(b => !BRAND_LIST.includes(b) && b !== COMMON);
-  if (known.length === BRAND_LIST.length && !extra.length) return COMMON;
-  return [...known, ...extra].join(',');
+  const dev = arr.includes(DEV) ? [DEV] : [];
+  const extra = arr.filter(b => !BRAND_LIST.includes(b) && b !== COMMON && b !== DEV);
+  const head = known.length === BRAND_LIST.length ? [COMMON] : known;
+  return [...head, ...dev, ...extra].join(',');
 };
 const brandLabel = it => {
   const v = brandsOf(it);
-  return !v.length ? '' : encodeBrands(v) === COMMON ? COMMON : v.join(' · ');
+  if (!v.length) return '';
+  const all = BRAND_LIST.every(b => v.includes(b));
+  return (all ? [COMMON, ...v.filter(b => !BRAND_LIST.includes(b))] : v).join(' · ');
 };
 const VERDICT = {
   usable: {
@@ -615,9 +622,9 @@ function PurchaseFields({
     key: c
   }, c)))), React.createElement("div", {
     className: `${lab} col-span-2 md:col-span-3`
-  }, "어느 브랜드에서 쓰나요? ", React.createElement("span", {
+  }, "어디에서 쓰나요? ", React.createElement("span", {
     className: "font-normal text-slate-500"
-  }, "(여러 개 선택)"), React.createElement("div", {
+  }, "(선택 · 여러 개 가능)"), React.createElement("div", {
     className: "mt-1"
   }, React.createElement(BrandPicker, {
     value: f.brand,
@@ -664,14 +671,14 @@ const BrandPicker = memo(function BrandPicker({
   idp
 }) {
   const cur = brandsOf(value);
-  const all = encodeBrands(cur) === COMMON;
+  const all = BRAND_LIST.every(b => cur.includes(b));
   const toggle = b => onChange(encodeBrands(cur.includes(b) ? cur.filter(x => x !== b) : [...cur, b]));
   const h = size === 'sm' ? 'h-9 px-2.5 text-xs' : 'h-10 px-3 text-sm';
   const chip = on => `${h} rounded-lg border font-bold touch-manipulation disabled:opacity-50 ${on ? 'border-orange-600 bg-orange-600 text-white' : 'border-orange-200 bg-white text-orange-900 hover:bg-orange-50'}`;
   return React.createElement("div", {
     className: "flex flex-wrap gap-1.5",
     role: "group",
-    "aria-label": "사용 브랜드"
+    "aria-label": "사용처"
   }, BRAND_LIST.map(b => React.createElement("button", {
     key: b,
     id: idp ? `${idp}-${b}` : undefined,
@@ -685,9 +692,19 @@ const BrandPicker = memo(function BrandPicker({
     type: "button",
     disabled: disabled,
     "aria-pressed": all,
-    onClick: () => onChange(all ? '' : COMMON),
+    onClick: () => onChange(encodeBrands(all ? cur.filter(b => !BRAND_LIST.includes(b)) : [...BRAND_LIST, ...cur])),
     className: chip(all)
-  }, COMMON));
+  }, COMMON), React.createElement("span", {
+    className: "mx-0.5 w-px self-stretch bg-slate-200",
+    "aria-hidden": "true"
+  }), React.createElement("button", {
+    id: idp ? `${idp}-dev` : undefined,
+    type: "button",
+    disabled: disabled,
+    "aria-pressed": cur.includes(DEV),
+    onClick: () => toggle(DEV),
+    className: `${h} rounded-lg border font-bold touch-manipulation disabled:opacity-50 ${cur.includes(DEV) ? 'border-violet-600 bg-violet-600 text-white' : 'border-violet-200 bg-white text-violet-800 hover:bg-violet-50'}`
+  }, DEV));
 });
 function DetailPanel({
   item,
@@ -889,8 +906,8 @@ const PartRow = memo(function PartRow({
   }), React.createElement("div", {
     className: "flex flex-wrap items-center gap-2"
   }, React.createElement("span", {
-    className: `text-xs font-semibold ${brandsOf(item).length ? 'text-slate-500' : 'text-rose-600'}`
-  }, brandsOf(item).length ? '사용 브랜드' : '브랜드 선택 필요'), React.createElement(BrandPicker, {
+    className: `text-xs font-semibold ${brandsOf(item).length ? 'text-slate-500' : 'text-amber-600'}`
+  }, brandsOf(item).length ? '사용처' : '사용처 미지정'), React.createElement(BrandPicker, {
     value: item.brand,
     onChange: v => onBrand(item.id, v),
     disabled: item._syncing,
@@ -1130,7 +1147,7 @@ const groupItems = (items, by = 'place') => {
     groups.get(k).items.push(it);
   }));
   const empty = by === 'brand' ? NO_BRAND : NO_PLACE;
-  const order = g => by === 'brand' && BRAND_LIST.includes(g.name) ? BRAND_LIST.indexOf(g.name) : 99;
+  const order = g => by !== 'brand' ? 99 : BRAND_LIST.includes(g.name) ? BRAND_LIST.indexOf(g.name) : g.name === DEV ? BRAND_LIST.length : 99;
   return [...groups.values()].map(g => {
     const shared = by === 'brand' ? g.items.filter(it => brandsOf(it).length > 1) : [];
     const own = g.items.filter(it => !shared.includes(it));
@@ -1244,7 +1261,7 @@ function GroupedList({
       size: 20,
       className: `shrink-0 text-slate-400 transition ${po ? 'rotate-90' : ''}`
     }), React.createElement("span", {
-      className: `shrink-0 rounded-lg px-2.5 py-1 text-sm font-bold ${g.empty ? 'bg-rose-50 text-rose-700' : by === 'brand' ? 'bg-orange-100 text-orange-900' : 'bg-sky-100 text-sky-900'}`
+      className: `shrink-0 rounded-lg px-2.5 py-1 text-sm font-bold ${g.empty ? by === 'brand' ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-500' : by === 'brand' ? g.name === DEV ? 'bg-violet-100 text-violet-900' : 'bg-orange-100 text-orange-900' : 'bg-sky-100 text-sky-900'}`
     }, g.name), React.createElement("span", {
       className: "truncate text-sm text-slate-500"
     }, summary), React.createElement("b", {
@@ -1275,7 +1292,7 @@ function GroupedList({
       className: "shrink-0 rounded-md bg-amber-200 px-2 py-0.5 text-sm font-bold text-amber-900"
     }, "공통 품목"), React.createElement("span", {
       className: "truncate text-xs text-amber-900"
-    }, g.shared.length, "건 · 다른 브랜드와 함께 씀 · ", g.sharedCats.map(c => c.name).join(' · ')), React.createElement("b", {
+    }, g.shared.length, "건 · 다른 곳과 함께 씀 · ", g.sharedCats.map(c => c.name).join(' · ')), React.createElement("b", {
       className: "ml-auto shrink-0 text-sm font-bold tabular-nums text-amber-950"
     }, fmtWon(g.sharedTotal))), so && React.createElement("div", {
       className: "mt-2 space-y-2"
@@ -1695,8 +1712,8 @@ function StatsView({
   }, s.reason.length === 0 ? React.createElement(Empty, null, "보류·불가 사유 태그가 아직 없습니다.") : React.createElement("div", {
     className: "h-52"
   }, hBar(s.reason, '건수', '#e11d48', 80, 'n'))), React.createElement(Card, {
-    title: "브랜드별 지출",
-    sub: "어느 브랜드에서 쓰나 · 공통 품목은 각 브랜드에 모두 포함(합계가 총 지출보다 클 수 있음)"
+    title: "사용처별 지출",
+    sub: "브랜드·개발실 · 공통 품목은 각 브랜드에 모두 포함(합계가 총 지출보다 클 수 있음)"
   }, React.createElement("div", {
     className: "h-60"
   }, hBar(s.brand, '지출', '#c2410c', 96))), React.createElement(Card, {
@@ -2235,7 +2252,7 @@ function App() {
   const suppliers = useMemo(() => [...new Set(items.map(i => i.supplier).filter(Boolean))].slice(0, 300), [items]);
   const places = useMemo(() => [...new Set([...items].sort(byDateDesc).map(i => i.purchase_place).filter(Boolean))].slice(0, 8), [items]);
   const allPlaces = useMemo(() => [...new Set(items.map(i => i.purchase_place).filter(Boolean))].slice(0, 300), [items]);
-  const brandChips = [...BRAND_LIST, NO_BRAND];
+  const brandChips = [...BRAND_LIST, DEV, NO_BRAND];
   const noBrandCount = useMemo(() => items.filter(i => !brandsOf(i).length).length, [items]);
   const filterActive = q || fVerdict.length || fCat.length || fBrand.length || fPlace.length;
   const clearFilters = () => {
@@ -2460,7 +2477,7 @@ function App() {
     key: b,
     active: fBrand.includes(b),
     onClick: () => tBrand(b),
-    dot: b === NO_BRAND ? 'bg-rose-500' : 'bg-orange-500'
+    dot: b === NO_BRAND ? 'bg-amber-500' : b === DEV ? 'bg-violet-500' : 'bg-orange-500'
   }, b, b === NO_BRAND ? React.createElement("span", {
     className: "tabular-nums opacity-70"
   }, " ", noBrandCount) : null)), places.length > 0 && React.createElement("span", {
@@ -2552,7 +2569,7 @@ function App() {
     className: "text-slate-900"
   }, filtered.length), "건 ", filterActive || period !== 'all' ? `(전체 ${items.length}건)` : ''), React.createElement("span", {
     className: "inline-flex rounded-lg bg-slate-200 p-0.5"
-  }, [['brand', '브랜드별'], ['place', '구매처별']].map(([k, l]) => React.createElement("button", {
+  }, [['brand', '사용처별'], ['place', '구매처별']].map(([k, l]) => React.createElement("button", {
     key: k,
     type: "button",
     onClick: () => setGroupBy(k),
