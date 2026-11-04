@@ -1084,16 +1084,34 @@ function App() {
   const tBrand = useCallback(toggleIn(setFBrand), []);
   const tPlace = useCallback(toggleIn(setFPlace), []);
 
+  /* 사용처 미지정 정리 모드: 미지정만 모아 보고, 이번에 지정한 품목은 화면에 남겨 둔다
+     (한 번 누르자마자 사라지면 두 번째 브랜드를 고를 수 없음) */
+  const [keepIds, setKeepIds] = useState(() => new Set());
+  const pendingMode = fBrand.includes(NO_BRAND);
+  const pendingRef = useRef(false);
+  pendingRef.current = pendingMode;
+  useEffect(() => { if (!pendingMode) setKeepIds(s => (s.size ? new Set() : s)); }, [pendingMode]);
+  const onBrandRow = useCallback((id, brand) => {
+    if (pendingRef.current) setKeepIds(s => (s.has(id) ? s : new Set(s).add(id)));
+    return setBrand(id, brand);
+  }, [setBrand]);
+  const listRef = useRef(null);
+  const startPending = () => {
+    setQuery(''); setFVerdict([]); setFCat([]); setFPlace([]); setFBrand([NO_BRAND]);
+    setPeriod('all'); setView('list'); setOpenAll({ v: true, t: Date.now() });
+    setTimeout(() => listRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+  };
+
   const searched = useMemo(() => {
     const tokens = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
     return items.filter(it => {
       if (tokens.length) { const h = derive(it).hay; if (!tokens.every(tk => h.includes(tk))) return false; }
       if (fCat.length && !fCat.includes(it.category)) return false;
-      if (fBrand.length) { const bs = brandsOf(it); if (!fBrand.some(b => (b === NO_BRAND ? !bs.length : bs.includes(b)))) return false; }
+      if (fBrand.length) { const bs = brandsOf(it); if (!fBrand.some(b => (b === NO_BRAND ? (!bs.length || keepIds.has(it.id)) : bs.includes(b)))) return false; }
       if (fPlace.length && !fPlace.includes(it.purchase_place || '')) return false;
       return true;
     });
-  }, [items, q, fCat, fBrand, fPlace]);
+  }, [items, q, fCat, fBrand, fPlace, keepIds]);
 
   const periodFrom = useMemo(() => {
     const d = new Date();
@@ -1125,15 +1143,19 @@ function App() {
   const places = useMemo(() => [...new Set([...items].sort(byDateDesc).map(i => i.purchase_place).filter(Boolean))].slice(0, 8), [items]);
   const allPlaces = useMemo(() => [...new Set(items.map(i => i.purchase_place).filter(Boolean))].slice(0, 300), [items]);
   const brandChips = [...BRAND_LIST, DEV, NO_BRAND];
-  const noBrandCount = useMemo(() => items.filter(i => !brandsOf(i).length).length, [items]);
+  const noBrandList = useMemo(() => items.filter(i => !brandsOf(i).length), [items]);
+  const noBrandCount = noBrandList.length;
+  const noBrandAmount = useMemo(() => noBrandList.reduce((s, it) => s + derive(it).amount, 0), [noBrandList]);
+  // 정리 모드에서는 구매처별로 묶어 둔다(사용처별이면 지정 즉시 다른 묶음으로 튀어서 찾기 어려움)
+  const listBy = pendingMode ? 'place' : groupBy;
 
   const filterActive = q || fVerdict.length || fCat.length || fBrand.length || fPlace.length;
   const clearFilters = () => { setQuery(''); setFVerdict([]); setFCat([]); setFBrand([]); setFPlace([]); };
 
   const renderRow = useCallback(it => (
     <PartRow key={it.id} item={it} places={places} expanded={expanded?.id === it.id ? expanded.mode : false}
-      onBrand={setBrand} onVerdict={setVerdict} onEval={commitEval} onToggleExpand={toggleExpand} onUpdate={updateItem} onRemove={removeItem} />
-  ), [expanded, places, setBrand, setVerdict, commitEval, toggleExpand, updateItem, removeItem]);
+      onBrand={onBrandRow} onVerdict={setVerdict} onEval={commitEval} onToggleExpand={toggleExpand} onUpdate={updateItem} onRemove={removeItem} />
+  ), [expanded, places, onBrandRow, setVerdict, commitEval, toggleExpand, updateItem, removeItem]);
 
   const saveAuthor = e => { e.preventDefault(); const n = authorDraft.trim().slice(0, 20); if (!n) return; setAuthor(n); lsSet('pur_author', n); setAuthorDraft(''); };
   const VIEWS = [{ k: 'list', label: '리스트', icon: List }, { k: 'calendar', label: '달력', icon: CalendarDays }, { k: 'stats', label: '통계', icon: BarChart3 }];
@@ -1193,6 +1215,31 @@ function App() {
             </div>
           ))}
         </section>
+
+        {/* 사용처 미지정 알림 */}
+        {status === 'ready' && (noBrandCount > 0 || keepIds.size > 0) && (
+          pendingMode ? (
+            <div className="flex flex-col gap-3 rounded-2xl border-2 border-amber-300 bg-amber-50 p-4 sm:flex-row sm:items-center">
+              <AlertTriangle className="hidden shrink-0 text-amber-600 sm:block" />
+              <p className="flex-1 text-sm text-amber-950">
+                <b>사용처 정리 중</b> · 남은 미지정 <b className="tabular-nums">{noBrandCount}건</b>
+                {keepIds.size > 0 && <span className="text-amber-800"> · 이번에 지정 {keepIds.size}건(목록에 남겨 둠)</span>}
+                <br /><span className="text-amber-800">각 품목의 [삼대미역]·[인생아구찜]·[어화락]·[공통]·[개발실]을 누르면 바로 저장됩니다. 여러 개 골라도 됩니다.</span>
+              </p>
+              <button type="button" onClick={() => setFBrand([])} className="h-11 shrink-0 rounded-xl bg-white px-4 text-sm font-bold text-amber-900 ring-1 ring-amber-300 hover:bg-amber-100">정리 끝내기</button>
+            </div>
+          ) : (
+            <button type="button" onClick={startPending}
+              className="flex w-full items-center gap-3 rounded-2xl border-2 border-amber-300 bg-amber-50 p-4 text-left hover:bg-amber-100">
+              <AlertTriangle className="shrink-0 text-amber-600" />
+              <span className="flex-1 text-sm text-amber-950">
+                <b>사용처 미지정 <span className="tabular-nums">{noBrandCount}건</span></b> <span className="tabular-nums text-amber-800">({fmtKRW(noBrandAmount)})</span>
+                <br /><span className="text-amber-800">어느 브랜드·개발실에서 썼는지 골라 주세요.</span>
+              </span>
+              <span className="inline-flex h-11 shrink-0 items-center rounded-xl bg-amber-500 px-4 text-sm font-bold text-white">지정하러 가기</span>
+            </button>
+          )
+        )}
 
         {/* 툴바 */}
         <section className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4">
@@ -1262,14 +1309,15 @@ function App() {
             ))}
           </div>
         ) : view === 'list' ? (
-          <div className="space-y-3">
+          <div ref={listRef} className="scroll-mt-24 space-y-3">
             <QuickAdd items={items} places={places} onAdd={addItem} onMerge={mergeQty} />
             <div className="flex flex-wrap items-center gap-2 px-1 text-sm text-slate-500">
               <span><b className="text-slate-900">{filtered.length}</b>건 {filterActive || period !== 'all' ? `(전체 ${items.length}건)` : ''}</span>
               <span className="inline-flex rounded-lg bg-slate-200 p-0.5">
                 {[['brand', '사용처별'], ['place', '구매처별']].map(([k, l]) => (
-                  <button key={k} type="button" onClick={() => setGroupBy(k)} aria-pressed={groupBy === k}
-                    className={`h-8 rounded-md px-3 text-sm font-bold ${groupBy === k ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'}`}>{l}</button>
+                  <button key={k} type="button" onClick={() => setGroupBy(k)} aria-pressed={listBy === k} disabled={pendingMode}
+                    title={pendingMode ? '사용처 정리 중에는 구매처별로 묶습니다' : undefined}
+                    className={`h-8 rounded-md px-3 text-sm font-bold disabled:cursor-not-allowed ${listBy === k ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'}`}>{l}</button>
                 ))}
               </span>
               {filtered.length > 0 && !q && (
@@ -1281,7 +1329,7 @@ function App() {
             </div>
             {filtered.length ? (
               // 검색 중에는 찾은 품목이 바로 보이도록 전부 펼친다
-              <GroupedList items={filtered} renderRow={renderRow} forceOpen={!!q} openAll={openAll} by={groupBy} />
+              <GroupedList items={filtered} renderRow={renderRow} forceOpen={!!q} openAll={openAll} by={listBy} />
             ) : (
               <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center">
                 {items.length === 0 ? (
